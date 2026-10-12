@@ -1,0 +1,12 @@
+# Android Release Keystore Configuration Template
+# -------------------------------------------------------------
+# INSTRUCTIONS:
+# 1. Generate your production release keystore using a secure keystore tool.
+# 2. Copy this file to 'android/key.properties' (do NOT commit key.properties to version control).
+# 3. Fill in the values below with the appropriate secure credentials and paths.
+# 4. Store the production keystore and passwords in a secure password manager or secret vault.
+#
+# storePassword=SECURE_KEYSTORE_PASSWORD
+# keyPassword=SECURE_KEY_PASSWORD
+# keyAlias=KEY_ALIAS
+# storeFile=PATH_TO_KEYSTORE_FILE (e.g. /secure/path/upload-keystore.jks or C:/secure/keystores/release.jks)

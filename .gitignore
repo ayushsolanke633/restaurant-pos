@@ -1,0 +1,62 @@
+﻿# Secrets and environment configuration
+.env
+.env.*
+!.env.example
+*.local
+*.secret
+application-prod.properties
+key.properties
+*.jks
+*.keystore
+
+# Database backups and dumps
+*.dump
+*.backup
+*.sql.gz
+backups/
+**/backups/
+backup_phase4g/
+
+# Java / Maven
+**/target/
+**/.mvn/wrapper/maven-wrapper.jar
+
+# React / Node
+**/node_modules/
+**/dist/
+**/.vite/
+
+# Flutter / Dart
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/android/local.properties
+
+# IDE and operating system
+**/.idea/
+**/.vscode/
+**/.DS_Store
+Thumbs.db
+
+# Local environment files (examples may be committed)
+**/.env
+**/.env.*
+!**/.env.example
+
+# Production configuration and credentials
+**/application-prod.properties
+**/key.properties
+**/*.jks
+**/*.keystore
+
+# Database dumps and local backups
+**/*.dump
+**/*.backup
+**/*.sql.gz
+/backups/
+/backup_phase4g/
+
+# Generated build artifacts
+/target/
+**/target/

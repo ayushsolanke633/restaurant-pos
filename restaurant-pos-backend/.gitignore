@@ -1,0 +1,25 @@
+# Maven / Build output
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**
+!**/src/test/**
+
+# IDE settings
+.idea/
+*.iws
+*.iml
+*.ipr
+.settings/
+.classpath
+.project
+.factorypath
+.vscode/
+
+# Environment files and secrets
+.env
+*.env
+*.local
+*.secret
+
+# Never commit production configuration
+/src/main/resources/application-prod.properties
