@@ -8,7 +8,7 @@ class PlaceholderPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Restaurant POS - Waiter'),
+        title: const Text('AnnaDhara'),
       ),
       body: Center(
         child: Padding(
@@ -19,7 +19,7 @@ class PlaceholderPage extends StatelessWidget {
               children: [
                 const SizedBox(height: 16),
                 Text(
-                  'Restaurant POS',
+                  'AnnaDhara',
                   style: Theme.of(context).textTheme.headlineMedium,
                   textAlign: TextAlign.center,
                 ),

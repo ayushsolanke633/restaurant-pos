@@ -15,18 +15,26 @@ public class KitchenOrderEventPublisher {
     }
 
     public void publishOrderCreated(Order order) {
-        publishEvent("ORDER_CREATED", order);
+        publishEvent("ORDER_CREATED", order, null, null);
     }
 
     public void publishOrderUpdated(Order order) {
-        publishEvent("ORDER_UPDATED", order);
+        publishEvent("ORDER_UPDATED", order, null, null);
+    }
+
+    public void publishOrderUpdated(Order order, Integer batchNumber, Boolean isUpdate) {
+        publishEvent("ORDER_UPDATED", order, batchNumber, isUpdate);
     }
 
     public void publishOrderStatusChanged(Order order) {
-        publishEvent("ORDER_STATUS_CHANGED", order);
+        publishEvent("ORDER_STATUS_CHANGED", order, null, null);
     }
 
-    private void publishEvent(String eventType, Order order) {
+    public void publishOrderStatusChanged(Order order, Integer batchNumber, Boolean isUpdate) {
+        publishEvent("ORDER_STATUS_CHANGED", order, batchNumber, isUpdate);
+    }
+
+    private void publishEvent(String eventType, Order order, Integer batchNumber, Boolean isUpdate) {
         if (order == null || order.getRestaurant() == null) {
             return;
         }
@@ -39,6 +47,8 @@ public class KitchenOrderEventPublisher {
                 .tableId(order.getTable() != null ? order.getTable().getId() : null)
                 .tableNumber(order.getTable() != null ? order.getTable().getTableNumber() : null)
                 .status(order.getStatus())
+                .batchNumber(batchNumber)
+                .isUpdate(isUpdate)
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .build();

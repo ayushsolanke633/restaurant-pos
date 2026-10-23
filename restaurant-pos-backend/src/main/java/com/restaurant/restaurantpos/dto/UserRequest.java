@@ -15,7 +15,6 @@ import lombok.Setter;
 @AllArgsConstructor
 public class UserRequest {
 
-    @NotNull(message = "Restaurant ID is required")
     private Long restaurantId;
 
     @NotNull(message = "Role ID is required")

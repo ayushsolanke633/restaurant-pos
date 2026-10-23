@@ -91,6 +91,7 @@ public class Step23SettingsTest {
         assertEquals("Thank you for visiting!", res.getReceiptFooter());
         assertEquals("INV", res.getInvoicePrefix());
         assertFalse(res.getAutoAcceptOrders());
+        assertTrue(res.getKitchenEnabled());
     }
 
     // GET /api/settings returns existing settings if present
@@ -158,6 +159,7 @@ public class Step23SettingsTest {
                 .receiptHeader("New Header")
                 .receiptFooter("New Footer")
                 .autoAcceptOrders(true)
+                .kitchenEnabled(true)
                 .build();
 
         RestaurantSettingsResponse res = settingsService.updateSettings(req);
@@ -171,6 +173,114 @@ public class Step23SettingsTest {
         assertEquals("New Header", res.getReceiptHeader());
         assertEquals("New Footer", res.getReceiptFooter());
         assertTrue(res.getAutoAcceptOrders());
+        assertTrue(res.getKitchenEnabled());
+    }
+
+    @Test
+    void testDisablingKitchenTurnsAutoAcceptOff() {
+        RestaurantSettings existing = new RestaurantSettings();
+        existing.setId(10L);
+        existing.setRestaurant(restaurantA);
+        existing.setKitchenEnabled(true);
+        existing.setAutoAcceptOrders(true);
+
+        when(securityUtils.isAdmin()).thenReturn(true);
+        when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
+        when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(existing));
+        when(settingsRepository.save(any(RestaurantSettings.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        RestaurantSettingsRequest disableReq = RestaurantSettingsRequest.builder()
+                .kitchenEnabled(false)
+                .build();
+
+        RestaurantSettingsResponse res = settingsService.updateSettings(disableReq);
+        assertFalse(res.getKitchenEnabled());
+        assertFalse(res.getAutoAcceptOrders());
+        assertFalse(existing.getKitchenEnabled());
+        assertFalse(existing.getAutoAcceptOrders());
+    }
+
+    @Test
+    void testCannotEnableAutoAcceptWhenKitchenDisabled() {
+        RestaurantSettings existing = new RestaurantSettings();
+        existing.setId(10L);
+        existing.setRestaurant(restaurantA);
+        existing.setKitchenEnabled(false);
+        existing.setAutoAcceptOrders(false);
+
+        when(securityUtils.isAdmin()).thenReturn(true);
+        when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
+        when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(existing));
+
+        // Attempt 1: Enable auto-accept while kitchen is already disabled
+        RestaurantSettingsRequest enableAutoAcceptReq = RestaurantSettingsRequest.builder()
+                .autoAcceptOrders(true)
+                .build();
+
+        RuntimeException ex1 = assertThrows(RuntimeException.class, () -> settingsService.updateSettings(enableAutoAcceptReq));
+        assertTrue(ex1.getMessage().contains("Kitchen Display System (KDS) must be enabled"));
+
+        // Attempt 2: Simultaneously disable kitchen and enable auto-accept
+        RestaurantSettingsRequest invalidComboReq = RestaurantSettingsRequest.builder()
+                .kitchenEnabled(false)
+                .autoAcceptOrders(true)
+                .build();
+
+        RuntimeException ex2 = assertThrows(RuntimeException.class, () -> settingsService.updateSettings(invalidComboReq));
+        assertTrue(ex2.getMessage().contains("Kitchen Display System (KDS) must be enabled"));
+    }
+
+    @Test
+    void testReEnablingKitchenDoesNotTurnAutoAcceptOn() {
+        RestaurantSettings existing = new RestaurantSettings();
+        existing.setId(10L);
+        existing.setRestaurant(restaurantA);
+        existing.setKitchenEnabled(false);
+        existing.setAutoAcceptOrders(false);
+
+        when(securityUtils.isAdmin()).thenReturn(true);
+        when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
+        when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(existing));
+        when(settingsRepository.save(any(RestaurantSettings.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        RestaurantSettingsRequest enableKitchenReq = RestaurantSettingsRequest.builder()
+                .kitchenEnabled(true)
+                .build();
+
+        RestaurantSettingsResponse res = settingsService.updateSettings(enableKitchenReq);
+        assertTrue(res.getKitchenEnabled());
+        assertFalse(res.getAutoAcceptOrders());
+        assertTrue(existing.getKitchenEnabled());
+        assertFalse(existing.getAutoAcceptOrders());
+    }
+
+    @Test
+    void testKitchenModeSwitchingBothDirections() {
+        RestaurantSettings existing = new RestaurantSettings();
+        existing.setId(20L);
+        existing.setRestaurant(restaurantA);
+        existing.setKitchenEnabled(true);
+
+        when(securityUtils.isAdmin()).thenReturn(true);
+        when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
+        when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(existing));
+        when(settingsRepository.save(any(RestaurantSettings.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // Switch to Kitchen-Free (false)
+        RestaurantSettingsRequest disableReq = RestaurantSettingsRequest.builder()
+                .kitchenEnabled(false)
+                .build();
+        RestaurantSettingsResponse disabledRes = settingsService.updateSettings(disableReq);
+        assertFalse(disabledRes.getKitchenEnabled());
+        assertFalse(existing.getKitchenEnabled());
+
+        // Switch back to Kitchen-Enabled (true)
+        RestaurantSettingsRequest enableReq = RestaurantSettingsRequest.builder()
+                .kitchenEnabled(true)
+                .build();
+        RestaurantSettingsResponse enabledRes = settingsService.updateSettings(enableReq);
+        assertTrue(enabledRes.getKitchenEnabled());
+        assertTrue(existing.getKitchenEnabled());
     }
 
     // 13 & 14. Tax rate bounds checking (0 to 100)

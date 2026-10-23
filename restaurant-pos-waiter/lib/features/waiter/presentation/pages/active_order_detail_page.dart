@@ -162,10 +162,10 @@ class _ActiveOrderDetailPageState extends State<ActiveOrderDetailPage>
   Future<void> _handleCancelOrder() async {
     if (_order == null) return;
 
-    if (!_order!.isNew) {
+    if (_order!.isCompleted || _order!.isCancelled) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Order cannot be modified after kitchen acceptance.'),
+        SnackBar(
+          content: Text('Order is already ${_order!.status.toLowerCase()}.'),
           backgroundColor: Colors.red,
         ),
       );
@@ -214,31 +214,36 @@ class _ActiveOrderDetailPageState extends State<ActiveOrderDetailPage>
           backgroundColor: Colors.green[700],
         ),
       );
-      Navigator.pop(context, true); // Return to tables page with refresh signal
+      if (Navigator.canPop(context)) {
+        Navigator.pop(context, true); // Return to tables page with refresh signal
+      } else {
+        Navigator.pushReplacementNamed(context, '/tables');
+      }
     } on AppException catch (e) {
       if (!mounted) return;
       setState(() {
         _isProcessing = false;
       });
-      final msg =
-          e.message.toLowerCase().contains('acceptance') ||
-              e.message.toLowerCase().contains('accepted')
-          ? 'Order cannot be modified after kitchen acceptance.'
-          : e.message;
+      final msg = e.message.trim().isNotEmpty
+          ? e.message.trim()
+          : 'Unable to cancel order.';
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
       _fetchActiveOrder();
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _isProcessing = false;
       });
+      final msg = e.toString().toLowerCase().contains('socket') ||
+              e.toString().toLowerCase().contains('network') ||
+              e.toString().toLowerCase().contains('connection')
+          ? 'Unable to cancel order. Please check network connection.'
+          : 'Unable to cancel order: ${e.toString()}';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Unable to cancel order. Please check network connection.',
-          ),
+        SnackBar(
+          content: Text(msg),
           backgroundColor: Colors.red,
         ),
       );
@@ -591,6 +596,34 @@ class _ActiveOrderDetailPageState extends State<ActiveOrderDetailPage>
               ),
               const SizedBox(height: 16),
 
+              // Billing & payment notice for Waiter
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 18, color: Colors.blue[800]),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Please ask Admin to generate the bill.',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.blue[900],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
               if (_isProcessing)
                 const CircularProgressIndicator()
               else ...[
@@ -634,6 +667,31 @@ class _ActiveOrderDetailPageState extends State<ActiveOrderDetailPage>
                           ),
                           onPressed: _handleModifyOrder,
                           child: const Text('MODIFY ORDER'),
+                        ),
+                      ),
+                    ],
+                  )
+                else if (!_order!.isCompleted && !_order!.isCancelled && isOwnerWaiter)
+                  Column(
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red,
+                            side: const BorderSide(color: Colors.red),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          onPressed: _handleCancelOrder,
+                          child: const Text('CANCEL ORDER'),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('BACK TO TABLES'),
                         ),
                       ),
                     ],

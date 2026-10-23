@@ -9,7 +9,7 @@ export const SuperAdminLayout = () => {
     <div className="layout-container super-admin-layout">
       <header className="app-header platform-header">
         <div className="header-brand">
-          <span className="brand-title">Restaurant POS</span>
+          <span className="brand-title">AnnaDhara</span>
           <span className="platform-tag">PLATFORM SUPER ADMIN</span>
         </div>
 

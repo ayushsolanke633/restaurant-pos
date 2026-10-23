@@ -45,7 +45,7 @@ export const ThermalReceipt = ({ bill, order, settings: propSettings, paperWidth
   const discountAmount = Number(bill?.discountAmount ?? order?.discountAmount ?? 0);
   const totalAmount = Number(bill?.totalAmount ?? order?.totalAmount ?? subtotal + taxAmount - discountAmount);
 
-  const restaurantName = settings?.restaurantName || 'RESTAURANT POS';
+  const restaurantName = settings?.restaurantName || 'AnnaDhara';
   const address = settings?.address || '';
   const phone = settings?.phone || '';
   const gstNumber = settings?.gstNumber || '';

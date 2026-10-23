@@ -24,5 +24,9 @@ public class KitchenOrderResponse {
     private String notes;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private Integer batchNumber;
+    private Integer totalBatches;
+    private Boolean isUpdate;
+    private List<KitchenBatchSummary> batches;
     private List<KitchenOrderItemResponse> items;
 }

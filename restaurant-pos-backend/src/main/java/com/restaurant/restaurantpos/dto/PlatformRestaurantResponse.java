@@ -25,6 +25,8 @@ public class PlatformRestaurantResponse {
     private String phone;
     private String email;
     private String gstNumber;
+    @com.fasterxml.jackson.annotation.JsonProperty("isActive")
+    @com.fasterxml.jackson.annotation.JsonAlias({"active", "status"})
     private Boolean isActive;
     private String adminEmail;
     private Long totalUsers;

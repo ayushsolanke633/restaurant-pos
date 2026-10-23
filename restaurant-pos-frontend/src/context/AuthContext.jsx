@@ -11,11 +11,14 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   // Logout handler
-  const logout = useCallback(() => {
-    authService.clearSession();
-    setUser(null);
-    setToken(null);
-    setRole(null);
+  const logout = useCallback(async () => {
+    try {
+      await authService.logout();
+    } finally {
+      setUser(null);
+      setToken(null);
+      setRole(null);
+    }
   }, []);
 
   // Restore session from localStorage on initial render

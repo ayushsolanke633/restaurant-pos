@@ -2,6 +2,7 @@ package com.restaurant.restaurantpos.security;
 
 import com.restaurant.restaurantpos.service.CustomUserDetailsService;
 import com.restaurant.restaurantpos.service.JwtService;
+import com.restaurant.restaurantpos.service.TokenRevocationService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,19 +23,29 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtService jwtService;
     private final CustomUserDetailsService userDetailsService;
     private final WaiterSessionManager waiterSessionManager;
+    private final TokenRevocationService tokenRevocationService;
 
     public JwtAuthenticationFilter(JwtService jwtService, CustomUserDetailsService userDetailsService) {
-        this(jwtService, userDetailsService, null);
+        this(jwtService, userDetailsService, null, null);
+    }
+
+    public JwtAuthenticationFilter(
+            JwtService jwtService,
+            CustomUserDetailsService userDetailsService,
+            WaiterSessionManager waiterSessionManager) {
+        this(jwtService, userDetailsService, waiterSessionManager, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
     public JwtAuthenticationFilter(
             JwtService jwtService,
             CustomUserDetailsService userDetailsService,
-            WaiterSessionManager waiterSessionManager) {
+            WaiterSessionManager waiterSessionManager,
+            TokenRevocationService tokenRevocationService) {
         this.jwtService = jwtService;
         this.userDetailsService = userDetailsService;
         this.waiterSessionManager = waiterSessionManager;
+        this.tokenRevocationService = tokenRevocationService;
     }
 
     @Override
@@ -53,6 +64,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         final String jwt = authHeader.substring(7);
 
         try {
+            String jti = jwtService.extractJti(jwt);
+            if (tokenRevocationService != null && tokenRevocationService.isRevoked(jti)) {
+                // Token revoked or check failed closed: do not authenticate
+                filterChain.doFilter(request, response);
+                return;
+            }
+
             final String userEmail = jwtService.extractUsername(jwt);
 
             if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {

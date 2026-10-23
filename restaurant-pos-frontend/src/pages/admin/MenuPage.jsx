@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import useAutoDismiss from '../../hooks/useAutoDismiss';
 import menuItemService from '../../services/menuItemService';
 import categoryService from '../../services/categoryService';
 import MenuItemModal from '../../components/admin/MenuItemModal';
@@ -10,6 +11,8 @@ export const MenuPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  useAutoDismiss(successMsg, () => setSuccessMsg(''));
 
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -335,8 +338,8 @@ export const MenuPage = () => {
                     </td>
                     <td>
                       <span
-                        className={`badge ${
-                          item.isAvailable ? 'badge-success' : 'badge-inactive'
+                        className={`status-badge ${
+                          item.isAvailable ? 'status-active' : 'status-inactive'
                         }`}
                       >
                         {item.isAvailable ? 'Available' : 'Unavailable'}

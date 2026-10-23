@@ -12,11 +12,14 @@ import com.restaurant.restaurantpos.entity.RestaurantTable;
 import com.restaurant.restaurantpos.entity.User;
 import com.restaurant.restaurantpos.repository.BillRepository;
 import com.restaurant.restaurantpos.repository.OrderRepository;
+import com.restaurant.restaurantpos.exception.OrderWorkflowConflictException;
 import com.restaurant.restaurantpos.repository.OrderStatusHistoryRepository;
 import com.restaurant.restaurantpos.repository.PaymentRepository;
+import com.restaurant.restaurantpos.repository.RestaurantSettingsRepository;
 import com.restaurant.restaurantpos.repository.RestaurantTableRepository;
 import com.restaurant.restaurantpos.repository.UserRepository;
 import com.restaurant.restaurantpos.security.SecurityUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,6 +45,7 @@ public class BillService {
     private final SecurityUtils securityUtils;
     private final KitchenOrderEventPublisher eventPublisher;
     private final NotificationService notificationService;
+    private final RestaurantSettingsRepository settingsRepository;
 
     public BillService(
             BillRepository billRepository,
@@ -53,6 +57,22 @@ public class BillService {
             SecurityUtils securityUtils,
             KitchenOrderEventPublisher eventPublisher,
             NotificationService notificationService) {
+        this(billRepository, paymentRepository, orderRepository, orderStatusHistoryRepository,
+             tableRepository, userRepository, securityUtils, eventPublisher, notificationService, null);
+    }
+
+    @Autowired
+    public BillService(
+            BillRepository billRepository,
+            PaymentRepository paymentRepository,
+            OrderRepository orderRepository,
+            OrderStatusHistoryRepository orderStatusHistoryRepository,
+            RestaurantTableRepository tableRepository,
+            UserRepository userRepository,
+            SecurityUtils securityUtils,
+            KitchenOrderEventPublisher eventPublisher,
+            NotificationService notificationService,
+            RestaurantSettingsRepository settingsRepository) {
         this.billRepository = billRepository;
         this.paymentRepository = paymentRepository;
         this.orderRepository = orderRepository;
@@ -62,6 +82,7 @@ public class BillService {
         this.securityUtils = securityUtils;
         this.eventPublisher = eventPublisher;
         this.notificationService = notificationService;
+        this.settingsRepository = settingsRepository;
     }
 
     @Transactional
@@ -78,12 +99,20 @@ public class BillService {
 
         Order order = findOrderScoped(request.getOrderId(), restaurantId);
 
-        if (!"READY".equalsIgnoreCase(order.getStatus())) {
-            throw new RuntimeException("Order is not in READY status");
+        boolean kitchenEnabled = isKitchenModeEnabled(restaurantId);
+        if (kitchenEnabled) {
+            if (!"READY".equalsIgnoreCase(order.getStatus())) {
+                throw new OrderWorkflowConflictException("Order is not in READY status");
+            }
+        } else {
+            List<String> activeStatuses = Arrays.asList("NEW", "ACCEPTED", "PREPARING", "READY");
+            if (!activeStatuses.contains(order.getStatus() != null ? order.getStatus().toUpperCase() : "")) {
+                throw new OrderWorkflowConflictException("Cannot create bill for order with status " + order.getStatus());
+            }
         }
 
         if (billRepository.existsByOrderId(order.getId())) {
-            throw new RuntimeException("Bill already exists for this order");
+            throw new OrderWorkflowConflictException("Bill already exists for this order");
         }
 
         User generatedBy = findUserScoped(currentUserId, restaurantId);
@@ -165,12 +194,20 @@ public class BillService {
 
         Order order = bill.getOrder();
 
-        if (!"READY".equalsIgnoreCase(order.getStatus())) {
-            throw new RuntimeException("Order is not in READY status");
+        boolean kitchenEnabled = isKitchenModeEnabled(restaurantId);
+        if (kitchenEnabled) {
+            if (!"READY".equalsIgnoreCase(order.getStatus())) {
+                throw new OrderWorkflowConflictException("Order is not in READY status");
+            }
+        } else {
+            List<String> activeStatuses = Arrays.asList("NEW", "ACCEPTED", "PREPARING", "READY");
+            if (!activeStatuses.contains(order.getStatus() != null ? order.getStatus().toUpperCase() : "")) {
+                throw new OrderWorkflowConflictException("Cannot process payment for order with status " + order.getStatus());
+            }
         }
 
         if (paymentRepository.existsByBillIdAndPaymentStatus(bill.getId(), "PAID")) {
-            throw new RuntimeException("Successful payment already exists for this bill");
+            throw new OrderWorkflowConflictException("Successful payment already exists for this bill");
         }
 
         String method = request.getPaymentMethod() != null ? request.getPaymentMethod().toUpperCase() : "";
@@ -336,5 +373,14 @@ public class BillService {
             throw new RuntimeException("User not found with id: " + id);
         }
         return user;
+    }
+
+    private boolean isKitchenModeEnabled(Long restaurantId) {
+        if (restaurantId == null || settingsRepository == null) {
+            return true;
+        }
+        return settingsRepository.findByRestaurantId(restaurantId)
+                .map(s -> s.getKitchenEnabled() != null ? s.getKitchenEnabled() : true)
+                .orElse(true);
     }
 }

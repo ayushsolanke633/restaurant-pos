@@ -5,6 +5,7 @@ import com.restaurant.restaurantpos.dto.RestaurantResponse;
 import com.restaurant.restaurantpos.entity.Restaurant;
 import com.restaurant.restaurantpos.repository.RestaurantRepository;
 import com.restaurant.restaurantpos.security.SecurityUtils;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +22,9 @@ public class RestaurantService {
 
     @Transactional
     public RestaurantResponse createRestaurant(RestaurantRequest request) {
+        if (!securityUtils.isSuperAdmin()) {
+            throw new AccessDeniedException("Access denied: Only SUPER_ADMIN can create a restaurant");
+        }
         Restaurant restaurant = mapToEntity(request);
         Restaurant savedRestaurant = restaurantRepository.save(restaurant);
         return mapToResponse(savedRestaurant);
@@ -50,7 +54,9 @@ public class RestaurantService {
 
     @Transactional
     public void deleteRestaurant(Long id) {
-        securityUtils.validateTenantAccess(id);
+        if (!securityUtils.isSuperAdmin()) {
+            throw new AccessDeniedException("Access denied: Only SUPER_ADMIN can delete a restaurant");
+        }
         if (!restaurantRepository.existsById(id)) {
             throw new RuntimeException("Restaurant not found with id: " + id);
         }

@@ -1,6 +1,8 @@
 package com.restaurant.restaurantpos.event;
 
 import com.restaurant.restaurantpos.dto.kitchen.KitchenOrderEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -8,6 +10,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 @Component
 public class KitchenOrderEventListener {
+
+    private static final Logger log = LoggerFactory.getLogger(KitchenOrderEventListener.class);
 
     private final SimpMessagingTemplate messagingTemplate;
     private final com.restaurant.restaurantpos.security.RestaurantWebSocketSessionManager restaurantWebSocketSessionManager;
@@ -37,13 +41,10 @@ public class KitchenOrderEventListener {
 
         String destination = "/topic/restaurants/" + event.getRestaurantId() + "/kitchen/orders";
 
-        System.out.println("[WS DEBUG]");
-        System.out.println("ORDER CREATED");
-        System.out.println("orderId=" + event.getOrderId());
-        System.out.println("restaurantId=" + event.getRestaurantId());
-        System.out.println("tableId=" + event.getTableId());
-        System.out.println("eventType=" + event.getEventType());
-        System.out.println("publishing=true");
+        if (log.isDebugEnabled()) {
+            log.debug("[WS EVENT] Kitchen order event published: orderId={}, restaurantId={}, tableId={}, eventType={}",
+                    event.getOrderId(), event.getRestaurantId(), event.getTableId(), event.getEventType());
+        }
 
         messagingTemplate.convertAndSend(destination, event);
     }

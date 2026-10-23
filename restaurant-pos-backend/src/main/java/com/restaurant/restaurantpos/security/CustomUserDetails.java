@@ -14,6 +14,26 @@ public class CustomUserDetails implements UserDetails {
     private final String passwordHash;
     private final boolean isActive;
     private final Collection<? extends GrantedAuthority> authorities;
+    private final Integer tokenVersion;
+
+    public CustomUserDetails(
+            Long userId,
+            Long restaurantId,
+            String roleName,
+            String email,
+            String passwordHash,
+            boolean isActive,
+            Collection<? extends GrantedAuthority> authorities,
+            Integer tokenVersion) {
+        this.userId = userId;
+        this.restaurantId = restaurantId;
+        this.roleName = roleName;
+        this.email = email;
+        this.passwordHash = passwordHash;
+        this.isActive = isActive;
+        this.authorities = authorities;
+        this.tokenVersion = tokenVersion != null ? tokenVersion : 1;
+    }
 
     public CustomUserDetails(
             Long userId,
@@ -23,13 +43,7 @@ public class CustomUserDetails implements UserDetails {
             String passwordHash,
             boolean isActive,
             Collection<? extends GrantedAuthority> authorities) {
-        this.userId = userId;
-        this.restaurantId = restaurantId;
-        this.roleName = roleName;
-        this.email = email;
-        this.passwordHash = passwordHash;
-        this.isActive = isActive;
-        this.authorities = authorities;
+        this(userId, restaurantId, roleName, email, passwordHash, isActive, authorities, 1);
     }
 
     public Long getUserId() {
@@ -42,6 +56,10 @@ public class CustomUserDetails implements UserDetails {
 
     public String getRoleName() {
         return roleName;
+    }
+
+    public Integer getTokenVersion() {
+        return tokenVersion;
     }
 
     @Override

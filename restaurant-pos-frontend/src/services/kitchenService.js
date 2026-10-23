@@ -33,32 +33,38 @@ export const kitchenService = {
   },
 
   /**
-   * Accept a new order (NEW -> ACCEPTED)
+   * Accept a new order or specific batch (NEW -> ACCEPTED)
    * @param {number|string} id 
+   * @param {number} [batchNumber]
    * @returns {Promise<Object>} KitchenOrderResponse
    */
-  async acceptOrder(id) {
-    const response = await api.patch(`${KITCHEN_ENDPOINT}/${id}/accept`);
+  async acceptOrder(id, batchNumber = null) {
+    const url = batchNumber != null ? `${KITCHEN_ENDPOINT}/${id}/batches/${batchNumber}/accept` : `${KITCHEN_ENDPOINT}/${id}/accept`;
+    const response = await api.patch(url);
     return response.data;
   },
 
   /**
-   * Start preparing an order (ACCEPTED -> PREPARING)
+   * Start preparing an order or specific batch (ACCEPTED -> PREPARING)
    * @param {number|string} id 
+   * @param {number} [batchNumber]
    * @returns {Promise<Object>} KitchenOrderResponse
    */
-  async prepareOrder(id) {
-    const response = await api.patch(`${KITCHEN_ENDPOINT}/${id}/preparing`);
+  async prepareOrder(id, batchNumber = null) {
+    const url = batchNumber != null ? `${KITCHEN_ENDPOINT}/${id}/batches/${batchNumber}/preparing` : `${KITCHEN_ENDPOINT}/${id}/preparing`;
+    const response = await api.patch(url);
     return response.data;
   },
 
   /**
-   * Mark order ready (PREPARING -> READY)
+   * Mark order or specific batch ready (PREPARING -> READY)
    * @param {number|string} id 
+   * @param {number} [batchNumber]
    * @returns {Promise<Object>} KitchenOrderResponse
    */
-  async readyOrder(id) {
-    const response = await api.patch(`${KITCHEN_ENDPOINT}/${id}/ready`);
+  async readyOrder(id, batchNumber = null) {
+    const url = batchNumber != null ? `${KITCHEN_ENDPOINT}/${id}/batches/${batchNumber}/ready` : `${KITCHEN_ENDPOINT}/${id}/ready`;
+    const response = await api.patch(url);
     return response.data;
   },
 };

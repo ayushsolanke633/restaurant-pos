@@ -35,4 +35,5 @@ public class RestaurantSettingsRequest {
     private String receiptFooter;
     private String invoicePrefix;
     private Boolean autoAcceptOrders;
+    private Boolean kitchenEnabled;
 }

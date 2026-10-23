@@ -34,6 +34,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     Optional<Order> findByIdAndRestaurantId(Long id, Long restaurantId);
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o WHERE o.id = :id AND o.restaurant.id = :restaurantId")
+    Optional<Order> findByIdAndRestaurantIdForUpdate(@Param("id") Long id, @Param("restaurantId") Long restaurantId);
+
     boolean existsByRestaurantIdAndTableIdAndOrderTypeAndStatusIn(Long restaurantId, Long tableId, String orderType, Collection<String> statuses);
 
     Optional<Order> findFirstByRestaurantIdAndTableIdAndOrderTypeAndStatusInOrderByCreatedAtDesc(Long restaurantId, Long tableId, String orderType, Collection<String> statuses);

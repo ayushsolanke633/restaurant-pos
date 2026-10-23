@@ -21,6 +21,14 @@ public class GlobalExceptionHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    @ExceptionHandler(RevocationStorageException.class)
+    public ResponseEntity<Map<String, String>> handleRevocationStorageException(RevocationStorageException ex) {
+        logger.error("Token revocation persistence failure: {}", ex.getMessage());
+        Map<String, String> error = new HashMap<>();
+        error.put("message", "Revocation store temporarily unavailable. Please try again.");
+        return new ResponseEntity<>(error, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
     @ExceptionHandler(DuplicateSessionException.class)
     public ResponseEntity<Map<String, String>> handleDuplicateSessionException(DuplicateSessionException ex) {
         Map<String, String> error = new HashMap<>();
@@ -35,8 +43,40 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(error, HttpStatus.CONFLICT);
     }
 
-    @ExceptionHandler({AuthenticationException.class, BadCredentialsException.class, DisabledException.class, UsernameNotFoundException.class})
+    @ExceptionHandler(KitchenWorkflowDisabledException.class)
+    public ResponseEntity<Map<String, String>> handleKitchenWorkflowDisabledException(KitchenWorkflowDisabledException ex) {
+        Map<String, String> error = new HashMap<>();
+        error.put("message", ex.getMessage());
+        return new ResponseEntity<>(error, HttpStatus.CONFLICT);
+    }
+
+    @ExceptionHandler(OrderWorkflowConflictException.class)
+    public ResponseEntity<Map<String, String>> handleOrderWorkflowConflictException(OrderWorkflowConflictException ex) {
+        Map<String, String> error = new HashMap<>();
+        error.put("message", ex.getMessage());
+        return new ResponseEntity<>(error, HttpStatus.CONFLICT);
+    }
+
+    @ExceptionHandler(DisabledException.class)
+    public ResponseEntity<Map<String, String>> handleDisabledException(DisabledException ex) {
+        logger.warn("Authentication rejected due to deactivated account: {}", ex.getMessage());
+        Map<String, String> error = new HashMap<>();
+        error.put("message", ex.getMessage() != null ? ex.getMessage() : "Account is deactivated");
+        return new ResponseEntity<>(error, HttpStatus.FORBIDDEN);
+    }
+
+    @ExceptionHandler({AuthenticationException.class, BadCredentialsException.class, UsernameNotFoundException.class})
     public ResponseEntity<Map<String, String>> handleAuthenticationException(Exception ex) {
+        Throwable cause = ex.getCause();
+        if (ex instanceof DisabledException || cause instanceof DisabledException) {
+            String msg = (ex instanceof DisabledException) ? ex.getMessage() : cause.getMessage();
+            logger.warn("Authentication rejected due to deactivated account: {}", msg);
+            Map<String, String> error = new HashMap<>();
+            error.put("message", msg != null ? msg : "Account is deactivated");
+            return new ResponseEntity<>(error, HttpStatus.FORBIDDEN);
+        }
+
+        logger.warn("Authentication failed: {}", ex.getMessage());
         Map<String, String> error = new HashMap<>();
         error.put("message", "Invalid email or password");
         return new ResponseEntity<>(error, HttpStatus.UNAUTHORIZED);
@@ -45,7 +85,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, String>> handleAccessDeniedException(AccessDeniedException ex) {
         Map<String, String> error = new HashMap<>();
-        error.put("message", "Access denied");
+        String msg = ex.getMessage();
+        if (msg == null || msg.isBlank()) {
+            msg = "Access denied";
+        }
+        error.put("message", msg);
         return new ResponseEntity<>(error, HttpStatus.FORBIDDEN);
     }
 

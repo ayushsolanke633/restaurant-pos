@@ -1,39 +1,61 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import tableService from '../../services/tableService';
 import orderService from '../../services/orderService';
 import KitchenWebSocketClient from '../../services/websocketService';
 import TableModal from '../../components/admin/TableModal';
+import OrderModal from '../../components/admin/OrderModal';
 import OrderDetailsModal from '../../components/admin/OrderDetailsModal';
 import BillModal from '../../components/admin/BillModal';
+import AvailableTableModal from '../../components/admin/AvailableTableModal';
+import TableActiveOrdersModal from '../../components/admin/TableActiveOrdersModal';
+import AddItemsModal from '../../components/admin/AddItemsModal';
 import useAuth from '../../hooks/useAuth';
+import useAutoDismiss from '../../hooks/useAutoDismiss';
 import { CURRENCY_SYMBOL } from '../../utils/constants';
 
 export const TablesPage = () => {
   const { user } = useAuth();
-  const navigate = useNavigate();
-  const restaurantId = user?.restaurantId || 1;
+  const restaurantId = user?.restaurantId;
 
   const [tables, setTables] = useState([]);
-  const [activeOrders, setActiveOrders] = useState({}); // tableId -> order
+  const [activeOrdersByTable, setActiveOrdersByTable] = useState({}); // tableId -> [orders]
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const [wsStatus, setWsStatus] = useState('DISCONNECTED');
+
+  useAutoDismiss(successMsg, () => setSuccessMsg(''));
+  const [_wsStatus, setWsStatus] = useState('DISCONNECTED');
 
   // Filter & Search states
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('ALL');
 
-  // Table Modal states (Add / Edit Table)
+  // Table Modal states (Add / Edit Table Capacity)
   const [isTableModalOpen, setIsTableModalOpen] = useState(false);
   const [editingTable, setEditingTable] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Available Table Modal state (Clicking an available table)
+  const [selectedAvailableTable, setSelectedAvailableTable] = useState(null);
+  const [isAvailableModalOpen, setIsAvailableModalOpen] = useState(false);
+
+  // Multiple Active Orders Modal state (Legacy table with > 1 active order)
+  const [multipleOrdersTable, setMultipleOrdersTable] = useState(null);
+  const [multipleActiveOrders, setMultipleActiveOrders] = useState([]);
+  const [isMultipleOrdersModalOpen, setIsMultipleOrdersModalOpen] = useState(false);
+
+  // Create Order Modal state (Creating dine-in order for a specific table)
+  const [orderModalTable, setOrderModalTable] = useState(null);
+  const [isAddOrderModalOpen, setIsAddOrderModalOpen] = useState(false);
+  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
 
   // Order Details & Bill Modal states (Occupied Table click & Billing)
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [isBillModalOpen, setIsBillModalOpen] = useState(false);
+
+  // Add Items Modal state (Adding incremental items to an existing order)
+  const [isAddItemsModalOpen, setIsAddItemsModalOpen] = useState(false);
 
   const wsClientRef = useRef(null);
 
@@ -51,29 +73,45 @@ export const TablesPage = () => {
       const sortedTables = [...tableList].sort((a, b) => Number(a.tableNumber) - Number(b.tableNumber));
       setTables(sortedTables);
 
-      // Map active orders (NEW, ACCEPTED, PREPARING, READY) by tableId
-      const activeMap = {};
+      // Group active orders (NEW, ACCEPTED, PREPARING, READY) by tableId
+      const ordersByTable = {};
+      const activeStatuses = ['NEW', 'ACCEPTED', 'PREPARING', 'READY'];
+
       if (Array.isArray(dineInOrders)) {
-        const activeStatuses = ['NEW', 'ACCEPTED', 'PREPARING', 'READY'];
         dineInOrders.forEach((ord) => {
           if (ord.tableId && activeStatuses.includes((ord.status || '').toUpperCase())) {
-            // Keep the latest order for each table
-            if (!activeMap[ord.tableId] || new Date(ord.createdAt) > new Date(activeMap[ord.tableId].createdAt)) {
-              activeMap[ord.tableId] = ord;
+            if (!ordersByTable[ord.tableId]) {
+              ordersByTable[ord.tableId] = [];
             }
+            ordersByTable[ord.tableId].push(ord);
           }
         });
+
+        // Sort descending by createdAt
+        Object.keys(ordersByTable).forEach((tId) => {
+          ordersByTable[tId].sort(
+            (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+          );
+        });
       }
-      setActiveOrders(activeMap);
+
+      setActiveOrdersByTable(ordersByTable);
     } catch (err) {
-      if (err.response) {
+      console.error('Failed to load tables or orders:', err);
+      if (err?.response) {
         if (err.response.status === 403) {
           setError('Access Denied: You do not have permission to view restaurant tables.');
+        } else if (err.response.status === 401) {
+          setError('Session expired. Please log in again.');
+        } else if (err.response.status >= 500) {
+          setError('Server error while loading tables. Please try again later.');
         } else {
           setError(err.response.data?.message || 'Failed to load restaurant tables.');
         }
-      } else {
+      } else if (err?.code === 'ERR_NETWORK' || err?.request) {
         setError('Unable to connect to the server. Please check your network connection.');
+      } else {
+        setError(err?.message || 'An unexpected error occurred while loading tables.');
       }
     } finally {
       if (showLoading) setLoading(false);
@@ -85,8 +123,19 @@ export const TablesPage = () => {
     if (!event) return;
     // When a DINE_IN order is created, updated, or status changed:
     if (event.orderType === 'DINE_IN' || event.tableId) {
-      // Re-fetch state seamlessly from REST API to maintain absolute source of truth
       fetchTablesAndOrders(false);
+
+      // If active order details modal is open and matches this event, update its data
+      if (event.orderId) {
+        setSelectedOrder((prev) => {
+          if (prev && Number(prev.id) === Number(event.orderId)) {
+            orderService.getOrderById(event.orderId).then((fresh) => {
+              setSelectedOrder(fresh);
+            }).catch(() => {});
+          }
+          return prev;
+        });
+      }
     }
   }, [fetchTablesAndOrders]);
 
@@ -137,7 +186,7 @@ export const TablesPage = () => {
   };
 
   const handleOpenEditModal = (e, tbl) => {
-    e.stopPropagation(); // Prevent opening order modal
+    if (e && e.stopPropagation) e.stopPropagation();
     setEditingTable(tbl);
     setIsTableModalOpen(true);
   };
@@ -165,57 +214,196 @@ export const TablesPage = () => {
       }
       setIsTableModalOpen(false);
     } catch (err) {
-      if (err.response) {
+      console.error('Failed to save table:', err);
+      if (err?.response) {
         if (err.response.status === 403) {
           setError('You do not have permission to perform this action.');
+        } else if (err.response.status >= 500) {
+          setError('Server error while saving table. Please try again later.');
         } else {
           setError(err.response.data?.message || 'Failed to save table.');
         }
+      } else if (err?.code === 'ERR_NETWORK' || err?.request) {
+        setError('Unable to connect to the server. Please check your network connection.');
       } else {
-        setError('Unable to connect to server. Please try again.');
+        setError(err?.message || 'Failed to save table.');
       }
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Occupied Table click handler -> View Active Order Details
+  // Table Card Click / Keyboard Selection Handler
   const handleTableCardClick = async (table) => {
+    setError('');
     const status = (table.status || '').toUpperCase();
-    if (status === 'OCCUPIED' || status === 'BILLING') {
-      // Check if we already have the active order in state
-      let activeOrd = activeOrders[table.id];
-      if (!activeOrd) {
+
+    if (status === 'AVAILABLE') {
+      // Available Table: Open details modal with Add Order & Edit options
+      setSelectedAvailableTable(table);
+      setIsAvailableModalOpen(true);
+    } else if (status === 'OCCUPIED' || status === 'BILLING') {
+      // Occupied / Billing Table: Retrieve active orders for this table
+      let tableOrders = activeOrdersByTable[table.id] || [];
+
+      if (tableOrders.length === 0) {
         try {
-          activeOrd = await orderService.getActiveOrderByTable(table.id);
+          const fetched = await orderService.getActiveOrderByTable(table.id);
+          if (fetched) {
+            tableOrders = [fetched];
+          }
         } catch (err) {
           console.warn('Could not fetch active order for table', table.id, err);
         }
       }
 
-      if (activeOrd) {
-        // Ensure table number is present for display
-        activeOrd.tableName = `Table ${table.tableNumber}`;
-        setSelectedOrder(activeOrd);
-        setIsOrderModalOpen(true);
-      } else {
-        // Fallback if no order record found
+      if (tableOrders.length === 0) {
         setError(`No active order records found for Table ${table.tableNumber}.`);
+        return;
+      }
+
+      if (tableOrders.length > 1) {
+        // Multiple active orders exist for this table in legacy data: require Admin to select intended order
+        setMultipleOrdersTable(table);
+        setMultipleActiveOrders(tableOrders);
+        setIsMultipleOrdersModalOpen(true);
+      } else {
+        // Exactly one active order: open OrderDetailsModal directly
+        const singleOrder = {
+          ...tableOrders[0],
+          tableName: `Table ${table.tableNumber}`,
+          tableNumber: table.tableNumber,
+          tableStatus: status,
+        };
+        setSelectedOrder(singleOrder);
+        setMultipleOrdersTable(table);
+        setMultipleActiveOrders([]);
+        setIsOrderModalOpen(true);
       }
     } else {
-      // Available Table: Open Edit modal or allow editing
+      // Other statuses (RESERVED, CLEANING): Open edit modal
       handleOpenEditModal({ stopPropagation: () => {} }, table);
     }
   };
 
+  // Handler from AvailableTableModal -> Open Add Order workflow
+  const handleStartAddOrder = (table) => {
+    setIsAvailableModalOpen(false);
+    setOrderModalTable(table);
+    setIsAddOrderModalOpen(true);
+  };
+
+  // Handler for creating a new DINE_IN order from table
+  const handleCreateOrderSubmit = async (formData) => {
+    setIsCreatingOrder(true);
+    setError('');
+    setSuccessMsg('');
+
+    try {
+      const created = await orderService.createOrder(formData);
+      setIsAddOrderModalOpen(false);
+      setSuccessMsg(
+        `Order #${created.id} created successfully for Table ${orderModalTable?.tableNumber || created.tableNumber || ''}.`
+      );
+      fetchTablesAndOrders(false);
+    } catch (err) {
+      console.error('Failed to create order:', err);
+      if (err?.response) {
+        if (err.response.status === 403) {
+          setError('You do not have permission to create this order.');
+        } else if (err.response.status >= 500) {
+          setError('Server error while creating order. Please try again later.');
+        } else {
+          setError(err.response.data?.message || 'Failed to create order.');
+        }
+      } else if (err?.code === 'ERR_NETWORK' || err?.request) {
+        setError('Unable to connect to the server. Please check your network connection.');
+      } else {
+        setError(err?.message || 'Failed to create order.');
+      }
+    } finally {
+      setIsCreatingOrder(false);
+    }
+  };
+
+  // Handler from TableActiveOrdersModal -> Admin selects an intended order
+  const handleSelectActiveOrder = (order) => {
+    setIsMultipleOrdersModalOpen(false);
+    const orderWithTable = {
+      ...order,
+      tableName: multipleOrdersTable ? `Table ${multipleOrdersTable.tableNumber}` : `Table ${order.tableNumber}`,
+      tableNumber: multipleOrdersTable?.tableNumber || order.tableNumber,
+      tableStatus: multipleOrdersTable?.status,
+    };
+    setSelectedOrder(orderWithTable);
+    setIsOrderModalOpen(true);
+  };
+
+  // Handler to navigate back to multiple active orders list from OrderDetailsModal
+  const handleBackToOrdersList = () => {
+    setIsOrderModalOpen(false);
+    setIsMultipleOrdersModalOpen(true);
+  };
+
+  // Handler to open Add Items modal
+  const handleOpenAddItems = (order) => {
+    setSelectedOrder(order);
+    setIsAddItemsModalOpen(true);
+  };
+
+  // Handler when items are successfully added to an existing order
+  const handleItemsAddedSuccess = (updatedOrder) => {
+    const enriched = {
+      ...updatedOrder,
+      tableName: selectedOrder?.tableName || `Table ${updatedOrder.tableNumber}`,
+      tableNumber: selectedOrder?.tableNumber || updatedOrder.tableNumber,
+      tableStatus: selectedOrder?.tableStatus,
+    };
+    setSelectedOrder(enriched);
+    setSuccessMsg(
+      `Successfully added items to Order #${updatedOrder.id}. New Total: ${CURRENCY_SYMBOL}${Number(updatedOrder.totalAmount).toFixed(2)}`
+    );
+    fetchTablesAndOrders(false);
+  };
+
+  // Handler for Admin Order Cancellation directly from OrderDetailsModal
+  const handleCancelOrder = async (order) => {
+    setError('');
+    setSuccessMsg('');
+    try {
+      const cancelled = await orderService.cancelOrder(order.id);
+      setIsOrderModalOpen(false);
+      setSelectedOrder(null);
+      setSuccessMsg(`Order #${cancelled.id} has been CANCELLED and table status updated.`);
+      fetchTablesAndOrders(false);
+    } catch (err) {
+      const msg = err.response?.data?.message || err.message || 'Failed to cancel order.';
+      setError(msg);
+      throw err; // Re-throw so OrderDetailsModal can display error inline if desired
+    }
+  };
+
+  // Handler for generating a bill
   const handleGenerateBill = (order) => {
     setIsOrderModalOpen(false);
     setSelectedOrder(order);
     setIsBillModalOpen(true);
   };
 
+  const handleBillGenerated = useCallback((newBill, billedOrder) => {
+    if (billedOrder?.tableId) {
+      setTables((prevTables) =>
+        prevTables.map((t) =>
+          t.id === billedOrder.tableId ? { ...t, status: 'BILLING' } : t
+        )
+      );
+    }
+    fetchTablesAndOrders(false);
+  }, [fetchTablesAndOrders]);
+
   const handlePaymentSuccess = () => {
     setSuccessMsg('Payment recorded successfully! Order completed and Table released.');
+    setSelectedOrder(null);
     fetchTablesAndOrders(false);
   };
 
@@ -253,7 +441,7 @@ export const TablesPage = () => {
         <div className="header-text">
           <h1 className="page-title">POS Table Management</h1>
           <p className="page-subtitle">
-            Real-time floor layout view and active dine-in table orders
+            Manage floor layout, create dine-in orders, add items, and track live active orders
           </p>
         </div>
         <div className="header-actions-group">
@@ -394,13 +582,30 @@ export const TablesPage = () => {
           {filteredTables.map((table) => {
             const status = (table.status || '').toUpperCase();
             const isOccupied = status === 'OCCUPIED' || status === 'BILLING';
+            const tableOrders = activeOrdersByTable[table.id] || [];
+            const hasMultiple = tableOrders.length > 1;
 
             return (
               <div
                 key={table.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`Table ${table.tableNumber}, ${table.capacity} Seats, Status ${status}`}
                 className={`pos-table-card status-${status.toLowerCase()}`}
                 onClick={() => handleTableCardClick(table)}
-                title={isOccupied ? `Table ${table.tableNumber} - Click to view active order` : `Table ${table.tableNumber} - Click to edit`}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleTableCardClick(table);
+                  }
+                }}
+                title={
+                  isOccupied
+                    ? hasMultiple
+                      ? `Table ${table.tableNumber} - ${tableOrders.length} Active Orders. Click to select order.`
+                      : `Table ${table.tableNumber} - Occupied. Click to manage active order.`
+                    : `Table ${table.tableNumber} - Available. Click to add order or edit.`
+                }
               >
                 <div className="pos-card-header">
                   <div className="table-number-title">
@@ -419,8 +624,17 @@ export const TablesPage = () => {
                   </button>
                 </div>
 
-                <div className="pos-card-footer">
+                <div className="pos-card-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   {renderStatusBadge(table.status)}
+                  {hasMultiple && (
+                    <span
+                      className="badge badge-warning"
+                      style={{ fontSize: '0.68rem', fontWeight: 700 }}
+                      title={`${tableOrders.length} active orders`}
+                    >
+                      {tableOrders.length} Orders
+                    </span>
+                  )}
                 </div>
               </div>
             );
@@ -437,15 +651,71 @@ export const TablesPage = () => {
         isSubmitting={isSubmitting}
       />
 
+      {/* Available Table Action Modal */}
+      <AvailableTableModal
+        isOpen={isAvailableModalOpen}
+        onClose={() => {
+          setIsAvailableModalOpen(false);
+          setSelectedAvailableTable(null);
+        }}
+        table={selectedAvailableTable}
+        onAddOrder={handleStartAddOrder}
+        onEditTable={(tbl) => {
+          setIsAvailableModalOpen(false);
+          handleOpenEditModal({ stopPropagation: () => {} }, tbl);
+        }}
+      />
+
+      {/* Multiple Active Orders Selection Modal (Legacy Data Protection) */}
+      <TableActiveOrdersModal
+        isOpen={isMultipleOrdersModalOpen}
+        onClose={() => {
+          setIsMultipleOrdersModalOpen(false);
+          setMultipleOrdersTable(null);
+          setMultipleActiveOrders([]);
+        }}
+        table={multipleOrdersTable}
+        orders={multipleActiveOrders}
+        onSelectOrder={handleSelectActiveOrder}
+      />
+
+      {/* Create Order Modal (Pre-locked for DINE_IN Table) */}
+      <OrderModal
+        isOpen={isAddOrderModalOpen}
+        onClose={() => {
+          setIsAddOrderModalOpen(false);
+          setOrderModalTable(null);
+        }}
+        onSubmit={handleCreateOrderSubmit}
+        initialData={null}
+        isSubmitting={isCreatingOrder}
+        initialTableId={orderModalTable?.id}
+        lockTable={true}
+      />
+
       {/* Occupied Table Order Details Modal */}
       <OrderDetailsModal
         isOpen={isOrderModalOpen}
         onClose={() => {
           setIsOrderModalOpen(false);
           setSelectedOrder(null);
+          setMultipleOrdersTable(null);
+          setMultipleActiveOrders([]);
         }}
         order={selectedOrder}
         onGenerateBill={handleGenerateBill}
+        onAddItems={handleOpenAddItems}
+        onCancelOrder={handleCancelOrder}
+        hasMultipleOrders={multipleActiveOrders.length > 1}
+        onBackToOrderList={handleBackToOrdersList}
+      />
+
+      {/* Add Items to Order Modal */}
+      <AddItemsModal
+        isOpen={isAddItemsModalOpen}
+        onClose={() => setIsAddItemsModalOpen(false)}
+        order={selectedOrder}
+        onItemsAdded={handleItemsAddedSuccess}
       />
 
       {/* Thermal Receipt & Payment Modal */}
@@ -453,9 +723,11 @@ export const TablesPage = () => {
         isOpen={isBillModalOpen}
         onClose={() => {
           setIsBillModalOpen(false);
+          setSelectedOrder(null);
         }}
         order={selectedOrder}
         onPaymentSuccess={handlePaymentSuccess}
+        onBillGenerated={handleBillGenerated}
       />
     </div>
   );

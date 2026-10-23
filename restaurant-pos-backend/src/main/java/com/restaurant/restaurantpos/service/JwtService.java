@@ -8,12 +8,14 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
+import com.restaurant.restaurantpos.security.CustomUserDetails;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 
 @Service
@@ -24,6 +26,17 @@ public class JwtService {
 
     @Value("${jwt.expiration-ms:86400000}")
     private long expirationMs = 86400000L;
+
+    private final com.restaurant.restaurantpos.security.TenantTokenVersionManager tenantTokenVersionManager;
+
+    public JwtService() {
+        this(null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public JwtService(@org.springframework.context.annotation.Lazy com.restaurant.restaurantpos.security.TenantTokenVersionManager tenantTokenVersionManager) {
+        this.tenantTokenVersionManager = tenantTokenVersionManager;
+    }
 
     @PostConstruct
     public void validateSecret() {
@@ -40,19 +53,30 @@ public class JwtService {
     }
 
     public String generateToken(User user) {
+        String jti = UUID.randomUUID().toString();
+        int tokenVersion = user.getTokenVersion() != null ? user.getTokenVersion() : 1;
+        Long restaurantId = user.getRestaurant() != null ? user.getRestaurant().getId() : null;
         Map<String, Object> claims = new HashMap<>();
         claims.put("userId", user.getId());
-        claims.put("restaurantId", user.getRestaurant() != null ? user.getRestaurant().getId() : null);
+        claims.put("restaurantId", restaurantId);
         claims.put("role", user.getRole() != null ? user.getRole().getName() : null);
-        return createToken(claims, user.getEmail());
+        claims.put("tokenVersion", tokenVersion);
+        if (restaurantId != null) {
+            int tenantVersion = tenantTokenVersionManager != null
+                    ? tenantTokenVersionManager.getTenantVersion(restaurantId)
+                    : 1;
+            claims.put("tenantVersion", tenantVersion);
+        }
+        return createToken(claims, user.getEmail(), jti);
     }
 
-    private String createToken(Map<String, Object> claims, String subject) {
+    private String createToken(Map<String, Object> claims, String subject, String jti) {
         Date now = new Date();
         Date expirationDate = new Date(now.getTime() + expirationMs);
 
         return Jwts.builder()
                 .claims(claims)
+                .id(jti)
                 .subject(subject)
                 .issuedAt(now)
                 .expiration(expirationDate)
@@ -62,6 +86,30 @@ public class JwtService {
 
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
+    }
+
+    public String extractJti(String token) {
+        return extractClaim(token, Claims::getId);
+    }
+
+    public Integer extractTokenVersion(String token) {
+        return extractClaim(token, claims -> {
+            Object ver = claims.get("tokenVersion");
+            if (ver instanceof Number num) {
+                return num.intValue();
+            }
+            return null;
+        });
+    }
+
+    public Integer extractTenantVersion(String token) {
+        return extractClaim(token, claims -> {
+            Object ver = claims.get("tenantVersion");
+            if (ver instanceof Number num) {
+                return num.intValue();
+            }
+            return null;
+        });
     }
 
     public Date extractExpiration(String token) {
@@ -83,7 +131,78 @@ public class JwtService {
 
     public boolean isTokenValid(String token, UserDetails userDetails) {
         final String username = extractUsername(token);
-        return (username != null && username.equalsIgnoreCase(userDetails.getUsername())) && !isTokenExpired(token);
+        if (username == null || !username.equalsIgnoreCase(userDetails.getUsername()) || isTokenExpired(token)) {
+            return false;
+        }
+
+        try {
+            Claims claims = extractAllClaims(token);
+
+            // 1. Validate jti claim presence (fail-closed after cutover)
+            String jti = claims.getId();
+            if (jti == null || jti.trim().isEmpty()) {
+                return false;
+            }
+
+            // 2. Validate tokenVersion claim presence (fail-closed after cutover)
+            Object tokenVerObj = claims.get("tokenVersion");
+            if (!(tokenVerObj instanceof Number tokenVerNum)) {
+                return false;
+            }
+            int tokenVersion = tokenVerNum.intValue();
+
+            if (userDetails instanceof CustomUserDetails cud) {
+                // 3. Validate tokenVersion against persisted user state
+                if (cud.getTokenVersion() == null || !cud.getTokenVersion().equals(tokenVersion)) {
+                    return false;
+                }
+
+                // 4. Validate tenantVersion for tenant users (tokens issued before restaurant deactivation cannot be reused)
+                if (cud.getRestaurantId() != null) {
+                    Object tenantVerObj = claims.get("tenantVersion");
+                    int tokenTenantVersion = (tenantVerObj instanceof Number num) ? num.intValue() : 1;
+                    int currentTenantVersion = tenantTokenVersionManager != null
+                            ? tenantTokenVersionManager.getTenantVersion(cud.getRestaurantId())
+                            : 1;
+                    if (tokenTenantVersion != currentTenantVersion) {
+                        return false;
+                    }
+                }
+
+                Object tokenUserIdObj = claims.get("userId");
+                if (tokenUserIdObj instanceof Number num && cud.getUserId() != null) {
+                    if (num.longValue() != cud.getUserId().longValue()) {
+                        return false;
+                    }
+                }
+
+                String tokenRole = claims.get("role", String.class);
+                if (tokenRole != null && cud.getRoleName() != null) {
+                    if (!tokenRole.equalsIgnoreCase(cud.getRoleName())) {
+                        return false;
+                    }
+                }
+
+                Object tokenRestIdObj = claims.get("restaurantId");
+                if ("SUPER_ADMIN".equalsIgnoreCase(cud.getRoleName())) {
+                    if (tokenRestIdObj != null || cud.getRestaurantId() != null) {
+                        return false;
+                    }
+                } else {
+                    if (tokenRestIdObj instanceof Number num && cud.getRestaurantId() != null) {
+                        if (num.longValue() != cud.getRestaurantId().longValue()) {
+                            return false;
+                        }
+                    } else if (cud.getRestaurantId() == null) {
+                        return false;
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            return false;
+        }
+
+        return true;
     }
 
     public boolean isTokenExpired(String token) {

@@ -19,6 +19,8 @@ import com.restaurant.restaurantpos.repository.RestaurantRepository;
 import com.restaurant.restaurantpos.repository.RestaurantTableRepository;
 import com.restaurant.restaurantpos.repository.UserRepository;
 import com.restaurant.restaurantpos.security.SecurityUtils;
+import com.restaurant.restaurantpos.entity.RestaurantSettings;
+import com.restaurant.restaurantpos.repository.RestaurantSettingsRepository;
 import com.restaurant.restaurantpos.service.NotificationService;
 import com.restaurant.restaurantpos.service.OrderService;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,6 +83,9 @@ public class AddItemsOrderTest {
     @Mock
     private BillRepository billRepository;
 
+    @Mock
+    private RestaurantSettingsRepository settingsRepository;
+
     @InjectMocks
     private OrderService orderService;
 
@@ -93,6 +98,10 @@ public class AddItemsOrderTest {
 
     @BeforeEach
     void setUp() {
+        RestaurantSettings settings = new RestaurantSettings();
+        settings.setKitchenEnabled(false);
+        lenient().when(settingsRepository.findByRestaurantId(anyLong())).thenReturn(Optional.of(settings));
+
         restaurant = new Restaurant();
         restaurant.setId(1L);
 

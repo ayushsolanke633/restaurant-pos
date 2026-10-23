@@ -5,6 +5,7 @@ import com.restaurant.restaurantpos.entity.OrderStatusHistory;
 import com.restaurant.restaurantpos.entity.RestaurantSettings;
 import com.restaurant.restaurantpos.entity.User;
 import com.restaurant.restaurantpos.event.KitchenOrderEventPublisher;
+import com.restaurant.restaurantpos.repository.OrderItemRepository;
 import com.restaurant.restaurantpos.repository.OrderRepository;
 import com.restaurant.restaurantpos.repository.OrderStatusHistoryRepository;
 import com.restaurant.restaurantpos.repository.RestaurantSettingsRepository;
@@ -32,6 +33,7 @@ public class AutoAcceptService {
     private final UserRepository userRepository;
     private final KitchenOrderEventPublisher eventPublisher;
     private final NotificationService notificationService;
+    private final OrderItemRepository orderItemRepository;
 
     public AutoAcceptService(
             OrderRepository orderRepository,
@@ -40,12 +42,26 @@ public class AutoAcceptService {
             UserRepository userRepository,
             KitchenOrderEventPublisher eventPublisher,
             NotificationService notificationService) {
+        this(orderRepository, settingsRepository, orderStatusHistoryRepository,
+             userRepository, eventPublisher, notificationService, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AutoAcceptService(
+            OrderRepository orderRepository,
+            RestaurantSettingsRepository settingsRepository,
+            OrderStatusHistoryRepository orderStatusHistoryRepository,
+            UserRepository userRepository,
+            KitchenOrderEventPublisher eventPublisher,
+            NotificationService notificationService,
+            OrderItemRepository orderItemRepository) {
         this.orderRepository = orderRepository;
         this.settingsRepository = settingsRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
         this.userRepository = userRepository;
         this.eventPublisher = eventPublisher;
         this.notificationService = notificationService;
+        this.orderItemRepository = orderItemRepository;
     }
 
     @Transactional
@@ -83,10 +99,6 @@ public class AutoAcceptService {
             return false;
         }
 
-        if (!"NEW".equalsIgnoreCase(order.getStatus())) {
-            return false;
-        }
-
         if (!"DINE_IN".equalsIgnoreCase(order.getOrderType())) {
             return false;
         }
@@ -100,29 +112,136 @@ public class AutoAcceptService {
         }
 
         LocalDateTime now = LocalDateTime.now();
-        int updated = orderRepository.updateStatusToAcceptedIfNew(orderId, now);
-        logger.info("[AUTO-ACCEPT] DB update count={} for orderId={}", updated, orderId);
-        if (updated == 0) {
+
+        if ("NEW".equalsIgnoreCase(order.getStatus())) {
+            int updated = orderRepository.updateStatusToAcceptedIfNew(orderId, now);
+            logger.info("[AUTO-ACCEPT] DB update count={} for orderId={}", updated, orderId);
+            if (updated == 0) {
+                return false;
+            }
+
+            order.setStatus("ACCEPTED");
+            order.setUpdatedAt(now);
+
+            if (orderItemRepository != null) {
+                List<com.restaurant.restaurantpos.entity.OrderItem> items = orderItemRepository.findByOrderId(orderId);
+                for (com.restaurant.restaurantpos.entity.OrderItem item : items) {
+                    if ("NEW".equalsIgnoreCase(item.getStatus()) || item.getStatus() == null) {
+                        item.setStatus("ACCEPTED");
+                    }
+                }
+                orderItemRepository.saveAll(items);
+            }
+
+            User changedByUser = findChangedByUser(order);
+
+            OrderStatusHistory history = new OrderStatusHistory();
+            history.setOrder(order);
+            history.setRestaurant(order.getRestaurant());
+            history.setStatus("ACCEPTED");
+            history.setChangedBy(changedByUser);
+            orderStatusHistoryRepository.save(history);
+
+            logger.info("[AUTO-ACCEPT] publishing ACCEPTED event for orderId={}", orderId);
+            eventPublisher.publishOrderStatusChanged(order);
+            notificationService.notifyOrderStatusChanged(order);
+
+            logger.info("Auto-accepted order ID {} for restaurant ID {}", order.getId(), order.getRestaurant().getId());
+            return true;
+        }
+
+        // Incremental batch auto-accept for orders already progressed beyond NEW
+        if (orderItemRepository != null && ("ACCEPTED".equalsIgnoreCase(order.getStatus()) || "PREPARING".equalsIgnoreCase(order.getStatus()) || "READY".equalsIgnoreCase(order.getStatus()))) {
+            List<com.restaurant.restaurantpos.entity.OrderItem> items = orderItemRepository.findByOrderId(orderId);
+            List<com.restaurant.restaurantpos.entity.OrderItem> newItems = items.stream()
+                    .filter(i -> "NEW".equalsIgnoreCase(i.getStatus()))
+                    .collect(java.util.stream.Collectors.toList());
+
+            if (newItems.isEmpty()) {
+                return false;
+            }
+
+            java.util.Set<Integer> acceptedBatches = new java.util.HashSet<>();
+            for (com.restaurant.restaurantpos.entity.OrderItem item : newItems) {
+                item.setStatus("ACCEPTED");
+                acceptedBatches.add(item.getBatchNumber() != null ? item.getBatchNumber() : 1);
+            }
+            orderItemRepository.saveAll(newItems);
+
+            order.setUpdatedAt(now);
+            orderRepository.save(order);
+
+            User changedByUser = findChangedByUser(order);
+            for (Integer batch : acceptedBatches) {
+                OrderStatusHistory history = new OrderStatusHistory();
+                history.setOrder(order);
+                history.setRestaurant(order.getRestaurant());
+                history.setStatus("ACCEPTED (Batch #" + batch + ")");
+                history.setChangedBy(changedByUser);
+                orderStatusHistoryRepository.save(history);
+
+                eventPublisher.publishOrderStatusChanged(order, batch, batch > 1);
+            }
+            notificationService.notifyOrderStatusChanged(order);
+
+            logger.info("Auto-accepted incremental batches {} for order ID {}", acceptedBatches, order.getId());
+            return true;
+        }
+
+        return false;
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean autoAcceptBatch(Long orderId, Integer batchNumber) {
+        Order order = orderRepository.findById(orderId).orElse(null);
+        if (order == null || batchNumber == null) {
+            return false;
+        }
+        if (!"DINE_IN".equalsIgnoreCase(order.getOrderType())) {
             return false;
         }
 
-        order.setStatus("ACCEPTED");
+        Optional<RestaurantSettings> settingsOpt = settingsRepository.findByRestaurantId(order.getRestaurant().getId());
+        boolean autoAcceptEnabled = settingsOpt.isPresent() && Boolean.TRUE.equals(settingsOpt.get().getAutoAcceptOrders());
+        if (!autoAcceptEnabled) {
+            return false;
+        }
+
+        if (orderItemRepository == null) {
+            return false;
+        }
+
+        List<com.restaurant.restaurantpos.entity.OrderItem> batchItems = orderItemRepository.findByOrderIdAndBatchNumber(orderId, batchNumber);
+        List<com.restaurant.restaurantpos.entity.OrderItem> newItems = batchItems.stream()
+                .filter(i -> "NEW".equalsIgnoreCase(i.getStatus()))
+                .collect(java.util.stream.Collectors.toList());
+
+        if (newItems.isEmpty()) {
+            return false;
+        }
+
+        for (com.restaurant.restaurantpos.entity.OrderItem item : newItems) {
+            item.setStatus("ACCEPTED");
+        }
+        orderItemRepository.saveAll(newItems);
+
+        LocalDateTime now = LocalDateTime.now();
+        if ("NEW".equalsIgnoreCase(order.getStatus())) {
+            order.setStatus("ACCEPTED");
+        }
         order.setUpdatedAt(now);
+        orderRepository.save(order);
 
         User changedByUser = findChangedByUser(order);
-
         OrderStatusHistory history = new OrderStatusHistory();
         history.setOrder(order);
         history.setRestaurant(order.getRestaurant());
-        history.setStatus("ACCEPTED");
+        history.setStatus("ACCEPTED (Batch #" + batchNumber + ")");
         history.setChangedBy(changedByUser);
         orderStatusHistoryRepository.save(history);
 
-        logger.info("[AUTO-ACCEPT] publishing ACCEPTED event for orderId={}", orderId);
-        eventPublisher.publishOrderStatusChanged(order);
+        eventPublisher.publishOrderStatusChanged(order, batchNumber, batchNumber > 1);
         notificationService.notifyOrderStatusChanged(order);
-
-        logger.info("Auto-accepted order ID {} for restaurant ID {}", order.getId(), order.getRestaurant().getId());
         return true;
     }
 

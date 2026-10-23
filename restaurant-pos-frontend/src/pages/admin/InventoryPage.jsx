@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import useAutoDismiss from '../../hooks/useAutoDismiss';
 import inventoryService from '../../services/inventoryService';
 import InventoryModal from '../../components/admin/InventoryModal';
 import InventoryTransactionModal from '../../components/admin/InventoryTransactionModal';
@@ -10,6 +11,8 @@ export const InventoryPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  useAutoDismiss(successMsg, () => setSuccessMsg(''));
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -69,7 +72,6 @@ export const InventoryPage = () => {
       await inventoryService.activateInventoryItem(id);
       setSuccessMsg('Inventory item activated successfully.');
       fetchInventoryData();
-      setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {
       setError(err.response?.data?.message || err.message || 'Failed to activate inventory item');
     }
@@ -81,7 +83,6 @@ export const InventoryPage = () => {
       await inventoryService.deactivateInventoryItem(id);
       setSuccessMsg('Inventory item deactivated successfully.');
       fetchInventoryData();
-      setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {
       setError(err.response?.data?.message || err.message || 'Failed to deactivate inventory item');
     }
@@ -324,7 +325,14 @@ export const InventoryPage = () => {
         item={selectedItemForEdit}
         isOpen={isItemModalOpen}
         onClose={() => setIsItemModalOpen(false)}
-        onSuccess={fetchInventoryData}
+        onSuccess={() => {
+          setSuccessMsg(
+            selectedItemForEdit
+              ? 'Inventory item updated successfully.'
+              : 'Inventory item created successfully.'
+          );
+          fetchInventoryData();
+        }}
       />
 
       {/* Stock Transaction Modal */}
@@ -332,7 +340,10 @@ export const InventoryPage = () => {
         item={selectedItemForTx}
         isOpen={isTxModalOpen}
         onClose={() => setIsTxModalOpen(false)}
-        onSuccess={fetchInventoryData}
+        onSuccess={() => {
+          setSuccessMsg('Stock transaction recorded successfully.');
+          fetchInventoryData();
+        }}
       />
 
       {/* Audit History Modal */}

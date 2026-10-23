@@ -30,7 +30,7 @@ export const AdminSidebar = ({ isOpen, onClose }) => {
       <aside className={`admin-sidebar ${isOpen ? 'sidebar-open' : ''}`}>
         <div className="sidebar-header">
           <div className="sidebar-brand">
-            <span className="brand-name">POS Admin</span>
+            <span className="brand-name">AnnaDhara</span>
           </div>
           <button 
             className="btn-close-sidebar" 

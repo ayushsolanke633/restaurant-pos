@@ -22,7 +22,7 @@ export const KitchenOrderCard = ({ order, onStatusTransition }) => {
   const handleActionClick = async (actionType) => {
     setIsSubmitting(true);
     try {
-      await onStatusTransition(order.orderId, actionType);
+      await onStatusTransition(order.orderId, actionType, order.batchNumber);
     } finally {
       setIsSubmitting(false);
     }
@@ -40,11 +40,23 @@ export const KitchenOrderCard = ({ order, onStatusTransition }) => {
   }
 
   return (
-    <div className={`kds-card kds-card-${order.status.toLowerCase()}`}>
+    <div className={`kds-card kds-card-${order.status.toLowerCase()} ${order.isUpdate ? 'kds-card-update' : ''}`}>
       {/* Card Header */}
       <div className="kds-card-header">
         <div className="kds-header-top">
-          <span className="kds-order-id">#{order.orderId}</span>
+          <div className="d-flex align-items-center gap-2">
+            <span className="kds-order-id">#{order.orderId}</span>
+            {order.isUpdate && (
+              <span className="kds-update-badge" title={`Incremental kitchen addition (Batch #${order.batchNumber})`}>
+                ⚡ UPDATE #{order.batchNumber}
+              </span>
+            )}
+            {!order.isUpdate && order.totalBatches > 1 && (
+              <span className="kds-batch-tag" title="First batch of this order">
+                Batch 1/{order.totalBatches}
+              </span>
+            )}
+          </div>
           <span className={`kds-order-type-badge ${isDineIn ? 'type-dinein' : 'type-takeaway'}`}>
             {isDineIn ? tableText : 'Takeaway'}
           </span>
@@ -55,6 +67,30 @@ export const KitchenOrderCard = ({ order, onStatusTransition }) => {
           </span>
         </div>
       </div>
+
+      {/* Batches Overview if multiple additions exist */}
+      {order.batches && order.batches.length > 1 && (
+        <div className="kds-batches-summary">
+          <div className="kds-batches-header">
+            <span>Order Progression ({order.batches.length} Batches)</span>
+            <span className="text-muted">Total: {order.batches.reduce((sum, b) => sum + (b.totalQuantity || 0), 0)} items</span>
+          </div>
+          <div className="kds-batch-pills">
+            {order.batches.map((b) => {
+              const isCurrent = b.batchNumber === order.batchNumber;
+              return (
+                <span
+                  key={b.batchNumber}
+                  className={`kds-batch-pill status-${b.status?.toLowerCase()} ${isCurrent ? 'current' : ''}`}
+                  title={`Batch #${b.batchNumber}: ${b.status} (${b.totalQuantity || 0} items)`}
+                >
+                  {isCurrent ? '▶ ' : ''}B#{b.batchNumber}: {b.status} ({b.totalQuantity || 0}x)
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Order Level Notes Banner */}
       {order.notes && (
@@ -88,7 +124,11 @@ export const KitchenOrderCard = ({ order, onStatusTransition }) => {
             onClick={() => handleActionClick('accept')}
             disabled={isSubmitting}
           >
-            {isSubmitting ? 'Accepting...' : 'Accept Order'}
+            {isSubmitting
+              ? 'Accepting...'
+              : order.isUpdate
+              ? `Accept Update #${order.batchNumber}`
+              : 'Accept Order'}
           </button>
         )}
 
@@ -98,7 +138,11 @@ export const KitchenOrderCard = ({ order, onStatusTransition }) => {
             onClick={() => handleActionClick('prepare')}
             disabled={isSubmitting}
           >
-            {isSubmitting ? 'Updating...' : 'Start Preparing'}
+            {isSubmitting
+              ? 'Updating...'
+              : order.isUpdate
+              ? `Start Preparing Update #${order.batchNumber}`
+              : 'Start Preparing'}
           </button>
         )}
 
@@ -108,13 +152,19 @@ export const KitchenOrderCard = ({ order, onStatusTransition }) => {
             onClick={() => handleActionClick('ready')}
             disabled={isSubmitting}
           >
-            {isSubmitting ? 'Updating...' : 'Mark Ready'}
+            {isSubmitting
+              ? 'Updating...'
+              : order.isUpdate
+              ? `Mark Update #${order.batchNumber} Ready`
+              : 'Mark Ready'}
           </button>
         )}
 
         {order.status === 'READY' && (
           <div className="kds-ready-badge">
-            Ready for Pickup / Service
+            {order.isUpdate
+              ? `Update #${order.batchNumber} Ready for Service`
+              : 'Ready for Pickup / Service'}
           </div>
         )}
       </div>

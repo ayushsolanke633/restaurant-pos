@@ -11,6 +11,8 @@ export const OrderModal = ({
   onSubmit,
   initialData,
   isSubmitting,
+  initialTableId = null,
+  lockTable = false,
 }) => {
   const [orderType, setOrderType] = useState('DINE_IN');
   const [tableId, setTableId] = useState('');
@@ -85,12 +87,19 @@ export const OrderModal = ({
           setNotes('');
           setCartItems([]);
 
-          // Filter only AVAILABLE tables
+          // Filter only AVAILABLE tables (or selected table if provided)
+          const targetTableId = initialTableId ? Number(initialTableId) : null;
           const avail = allTables
-            .filter((t) => (t.status || '').toUpperCase() === 'AVAILABLE')
+            .filter(
+              (t) => (t.status || '').toUpperCase() === 'AVAILABLE' || (targetTableId && t.id === targetTableId)
+            )
             .sort((a, b) => Number(a.tableNumber) - Number(b.tableNumber));
           setAvailableTables(avail);
-          setTableId(avail.length > 0 ? String(avail[0].id) : '');
+          if (targetTableId) {
+            setTableId(String(targetTableId));
+          } else {
+            setTableId(avail.length > 0 ? String(avail[0].id) : '');
+          }
         }
       } catch (err) {
         console.error('Failed to load dependencies for OrderModal:', err);
@@ -101,7 +110,7 @@ export const OrderModal = ({
 
     loadFormDependencies();
     setErrors({});
-  }, [isOpen, initialData]);
+  }, [isOpen, initialData, initialTableId]);
 
   // Filter menu items for picker
   const filteredMenuItems = useMemo(() => {
@@ -207,12 +216,21 @@ export const OrderModal = ({
   };
 
   const isEditing = !!initialData;
+  const selectedTableObj = useMemo(() => {
+    return availableTables.find((t) => String(t.id) === String(tableId));
+  }, [availableTables, tableId]);
+
+  const modalTitle = isEditing
+    ? `Edit Order #${initialData.id}`
+    : lockTable && selectedTableObj
+    ? `Create Dine-In Order - Table ${selectedTableObj.tableNumber}`
+    : 'Create New Order';
 
   return (
     <AdminModal
       isOpen={isOpen}
       onClose={onClose}
-      title={isEditing ? `Edit Order #${initialData.id}` : 'Create New Order'}
+      title={modalTitle}
     >
       {loadingData ? (
         <div className="loading-state">
@@ -231,7 +249,7 @@ export const OrderModal = ({
                   orderType === 'DINE_IN' ? 'active' : ''
                 }`}
                 onClick={() => setOrderType('DINE_IN')}
-                disabled={isSubmitting}
+                disabled={isSubmitting || lockTable}
               >
                 Dine In
               </button>
@@ -241,11 +259,16 @@ export const OrderModal = ({
                   orderType === 'TAKEAWAY' ? 'active' : ''
                 }`}
                 onClick={() => setOrderType('TAKEAWAY')}
-                disabled={isSubmitting}
+                disabled={isSubmitting || lockTable}
               >
                 Takeaway
               </button>
             </div>
+            {lockTable && (
+              <span className="form-help-text" style={{ fontSize: '0.75rem', color: 'var(--wn-text-muted)' }}>
+                Dine-in order assigned to Table {selectedTableObj?.tableNumber || ''}.
+              </span>
+            )}
           </div>
 
           {/* Table Selection for DINE_IN */}
@@ -259,7 +282,7 @@ export const OrderModal = ({
                 }`}
                 value={tableId}
                 onChange={(e) => setTableId(e.target.value)}
-                disabled={isSubmitting || availableTables.length === 0}
+                disabled={isSubmitting || lockTable || availableTables.length === 0}
               >
                 {availableTables.length === 0 ? (
                   <option value="">No available tables</option>

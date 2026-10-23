@@ -28,6 +28,7 @@ public class RestaurantSettingsResponse {
     private String receiptFooter;
     private String invoicePrefix;
     private Boolean autoAcceptOrders;
+    private Boolean kitchenEnabled;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

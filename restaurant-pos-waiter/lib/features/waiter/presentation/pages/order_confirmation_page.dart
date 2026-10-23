@@ -123,13 +123,13 @@ class OrderConfirmationPage extends StatelessWidget {
                               padding: const EdgeInsets.symmetric(vertical: 14),
                             ),
                             onPressed: () {
-                              Navigator.pushReplacement(
+                              Navigator.pushAndRemoveUntil(
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) => ActiveOrderDetailPage(
                                     table: TableModel(
                                       id: order.tableId ?? 0,
-                                      restaurantId: order.restaurantId ?? 1,
+                                      restaurantId: order.restaurantId ?? 0,
                                       tableNumber: tableNumber,
                                       capacity: 4,
                                       status: 'OCCUPIED',
@@ -137,6 +137,7 @@ class OrderConfirmationPage extends StatelessWidget {
                                     initialOrder: order,
                                   ),
                                 ),
+                                (route) => route.isFirst,
                               );
                             },
                             child: const Text(

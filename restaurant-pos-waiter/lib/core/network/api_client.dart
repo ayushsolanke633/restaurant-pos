@@ -47,18 +47,7 @@ class ApiClient {
     _currentBaseUrl = _urlResolver.normalizeUrl(url);
   }
 
-  Map<String, dynamic>? _decodeJwtClaims(String? token) {
-    if (token == null || token.isEmpty) return null;
-    try {
-      final parts = token.split('.');
-      if (parts.length != 3) return null;
-      final normalized = base64Url.normalize(parts[1]);
-      final payloadString = utf8.decode(base64Url.decode(normalized));
-      return json.decode(payloadString) as Map<String, dynamic>;
-    } catch (_) {
-      return null;
-    }
-  }
+
 
   Future<dynamic> get(
     String endpoint, {
@@ -161,32 +150,21 @@ class ApiClient {
     Future<http.Response> Function(String baseUrl) requestFn,
   ) async {
     String activeUrl = await getBaseUrl();
-    final hasAuth = headers.containsKey('Authorization');
-    final rawAuth = headers['Authorization'];
-    final token = (rawAuth != null && rawAuth.startsWith('Bearer '))
-        ? rawAuth.substring(7)
-        : null;
-    final claims = _decodeJwtClaims(token);
-
     // First attempt with current active URL
     try {
       final response = await requestFn(activeUrl);
-      debugPrint('[MENU DEBUG]');
-      debugPrint('METHOD: $method $endpoint');
-      debugPrint('Base URL: $activeUrl');
-      debugPrint('Auth Header Attached: $hasAuth');
-      if (claims != null) {
-        debugPrint('Decoded JWT Claims: role=${claims['role']}, restaurantId=${claims['restaurantId']}, userId=${claims['userId']}, sub=${claims['sub']}');
-      } else {
-        debugPrint('Decoded JWT Claims: null (no valid token present)');
+      if (kDebugMode) {
+        debugPrint('[API] $method $endpoint (status: ${response.statusCode})');
       }
-      debugPrint('Status: ${response.statusCode}');
-      debugPrint('Response: ${response.body}');
       return _handleResponse(response);
     } on SocketException catch (e) {
-      debugPrint('[MENU DEBUG] SocketException on $activeUrl: $e');
+      if (kDebugMode) {
+        debugPrint('[API] SocketException on $activeUrl for $method $endpoint: $e');
+      }
     } on http.ClientException catch (e) {
-      debugPrint('[MENU DEBUG] ClientException on $activeUrl: $e');
+      if (kDebugMode) {
+        debugPrint('[API] ClientException on $activeUrl for $method $endpoint: $e');
+      }
     }
 
     // Connection failed -> Invalidate current URL and attempt recovery across priorities
@@ -242,7 +220,10 @@ class ApiClient {
         _storageService.clearSession();
         throw const AppException('Your session has expired. Please login again.', code: '401');
       case 403:
-        throw const AppException('You do not have permission to perform this action.', code: '403');
+        final msg = (body is Map)
+            ? (body['message'] ?? body['error'] ?? 'You do not have permission to perform this action.')
+            : 'You do not have permission to perform this action.';
+        throw AppException(msg.toString(), code: '403', details: (body is Map) ? body : null);
       case 404:
         throw const AppException('The requested order or table could not be found.', code: '404');
       case 409:

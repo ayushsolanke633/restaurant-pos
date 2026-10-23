@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import useAutoDismiss from '../../hooks/useAutoDismiss';
 import settingsService from '../../services/settingsService';
 
 const COMMON_CURRENCIES = [
@@ -39,7 +40,11 @@ export const SettingsPage = () => {
     receiptHeader: '',
     receiptFooter: '',
     autoAcceptOrders: false,
+    kitchenEnabled: true,
   });
+
+  const [showKitchenModal, setShowKitchenModal] = useState(false);
+  const [pendingKitchenEnabled, setPendingKitchenEnabled] = useState(true);
 
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -47,9 +52,26 @@ export const SettingsPage = () => {
   const [successMessage, setSuccessMessage] = useState(null);
   const [validationErrors, setValidationErrors] = useState({});
 
-  useEffect(() => {
-    fetchSettings();
-  }, []);
+  useAutoDismiss(successMessage, () => setSuccessMessage(null));
+
+  const populateForm = (data) => {
+    setInitialSettings(data);
+    setFormData({
+      taxEnabled: data.taxEnabled ?? true,
+      defaultTaxRate: data.defaultTaxRate !== undefined && data.defaultTaxRate !== null ? String(data.defaultTaxRate) : '0.00',
+      serviceChargeEnabled: data.serviceChargeEnabled ?? false,
+      defaultServiceChargeRate: data.defaultServiceChargeRate !== undefined && data.defaultServiceChargeRate !== null ? String(data.defaultServiceChargeRate) : '0.00',
+      currency: data.currency || 'INR',
+      timezone: data.timezone || 'Asia/Kolkata',
+      invoicePrefix: data.invoicePrefix || 'INV',
+      receiptHeader: data.receiptHeader || '',
+      receiptFooter: data.receiptFooter || '',
+      autoAcceptOrders: data.autoAcceptOrders ?? false,
+      kitchenEnabled: data.kitchenEnabled ?? true,
+    });
+    setPendingKitchenEnabled(data.kitchenEnabled ?? true);
+    setValidationErrors({});
+  };
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -65,26 +87,19 @@ export const SettingsPage = () => {
     }
   };
 
-  const populateForm = (data) => {
-    setInitialSettings(data);
-    setFormData({
-      taxEnabled: data.taxEnabled ?? true,
-      defaultTaxRate: data.defaultTaxRate !== undefined && data.defaultTaxRate !== null ? String(data.defaultTaxRate) : '0.00',
-      serviceChargeEnabled: data.serviceChargeEnabled ?? false,
-      defaultServiceChargeRate: data.defaultServiceChargeRate !== undefined && data.defaultServiceChargeRate !== null ? String(data.defaultServiceChargeRate) : '0.00',
-      currency: data.currency || 'INR',
-      timezone: data.timezone || 'Asia/Kolkata',
-      invoicePrefix: data.invoicePrefix || 'INV',
-      receiptHeader: data.receiptHeader || '',
-      receiptFooter: data.receiptFooter || '',
-      autoAcceptOrders: data.autoAcceptOrders ?? false,
-    });
-    setValidationErrors({});
-  };
+  useEffect(() => {
+    fetchSettings();
+  }, []);
 
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
     const val = type === 'checkbox' ? checked : value;
+
+    if (name === 'autoAcceptOrders' && val && !formData.kitchenEnabled) {
+      setError('Kitchen Display System (KDS) must be enabled before Auto-Accept Orders can be turned on.');
+      setSuccessMessage(null);
+      return;
+    }
 
     setFormData((prev) => ({
       ...prev,
@@ -96,6 +111,78 @@ export const SettingsPage = () => {
     }
     setSuccessMessage(null);
     setError(null);
+  };
+
+  const handleAutoAcceptToggle = (e) => {
+    const nextVal = e.target.checked;
+    if (nextVal && !formData.kitchenEnabled) {
+      e.target.checked = false;
+      setError('Kitchen Display System (KDS) must be enabled before Auto-Accept Orders can be turned on.');
+      setSuccessMessage(null);
+      return;
+    }
+    setFormData((prev) => ({
+      ...prev,
+      autoAcceptOrders: nextVal,
+    }));
+    if (validationErrors.autoAcceptOrders) {
+      setValidationErrors((prev) => ({ ...prev, autoAcceptOrders: null }));
+    }
+    setError(null);
+    setSuccessMessage(null);
+  };
+
+  const handleAutoAcceptWrapperClick = (e) => {
+    if (!formData.kitchenEnabled) {
+      e.preventDefault();
+      setError('Kitchen Display System (KDS) must be enabled before Auto-Accept Orders can be turned on.');
+      setSuccessMessage(null);
+    }
+  };
+
+  const handleKitchenModeToggle = (e) => {
+    const nextVal = e.target.checked;
+    setPendingKitchenEnabled(nextVal);
+    setShowKitchenModal(true);
+  };
+
+  const confirmKitchenModeChange = async () => {
+    const nextVal = pendingKitchenEnabled;
+    setIsSaving(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const updatedResponse = await settingsService.updateSettings({
+        kitchenEnabled: nextVal,
+      });
+      setInitialSettings(updatedResponse);
+      setFormData((prev) => ({
+        ...prev,
+        kitchenEnabled: updatedResponse.kitchenEnabled ?? nextVal,
+        autoAcceptOrders: updatedResponse.autoAcceptOrders ?? (nextVal ? prev.autoAcceptOrders : false),
+      }));
+      setPendingKitchenEnabled(updatedResponse.kitchenEnabled ?? nextVal);
+      setShowKitchenModal(false);
+      setSuccessMessage(
+        nextVal
+          ? 'Kitchen Display System (KDS) Workflow enabled successfully.'
+          : 'Kitchen-Free Mode enabled successfully. Auto-Accept Orders has been automatically turned OFF.'
+      );
+    } catch (err) {
+      console.error('Failed to update kitchen mode setting:', err);
+      const backendMessage = err.response?.data?.message || err.message;
+      setError(backendMessage || 'Failed to update kitchen mode setting. Please try again.');
+      setShowKitchenModal(false);
+      setPendingKitchenEnabled(formData.kitchenEnabled);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const cancelKitchenModeChange = () => {
+    if (isSaving) return;
+    setShowKitchenModal(false);
+    setPendingKitchenEnabled(formData.kitchenEnabled);
   };
 
   const validateForm = () => {
@@ -142,6 +229,11 @@ export const SettingsPage = () => {
       errors.receiptFooter = 'Receipt footer cannot exceed 500 characters';
     }
 
+    // Auto-Accept Orders dependency validation
+    if (formData.autoAcceptOrders && !formData.kitchenEnabled) {
+      errors.autoAcceptOrders = 'Kitchen Display System (KDS) must be enabled before Auto-Accept Orders can be turned on';
+    }
+
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -150,6 +242,11 @@ export const SettingsPage = () => {
     e.preventDefault();
     setSuccessMessage(null);
     setError(null);
+
+    if (formData.autoAcceptOrders && !formData.kitchenEnabled) {
+      setError('Kitchen Display System (KDS) must be enabled before Auto-Accept Orders can be turned on.');
+      return;
+    }
 
     if (!validateForm()) {
       return;
@@ -168,6 +265,7 @@ export const SettingsPage = () => {
       receiptHeader: formData.receiptHeader ? formData.receiptHeader.trim() : '',
       receiptFooter: formData.receiptFooter ? formData.receiptFooter.trim() : '',
       autoAcceptOrders: formData.autoAcceptOrders,
+      kitchenEnabled: formData.kitchenEnabled,
     };
 
     try {
@@ -457,33 +555,78 @@ export const SettingsPage = () => {
           </div>
         </div>
 
-        {/* Section 4: Operational Automation & Kitchen Settings */}
+        {/* Section 4: Order & Kitchen Settings */}
         <div className="settings-card">
           <div className="card-header">
-            <h2>Kitchen Settings & Operational Workflow</h2>
-            <p>Configure Kitchen Display System (KDS) order acceptance workflow</p>
+            <h2>Order & Kitchen Settings</h2>
+            <p>Configure Kitchen Display System (KDS) order workflows and operational automation</p>
           </div>
           <div className="card-body">
-            <div className="toggle-group-card inline-toggle">
+            {/* Kitchen Mode Setting (KDS vs Kitchen-Free) */}
+            <div className="toggle-group-card inline-toggle mb-4">
               <div className="toggle-header">
                 <div>
-                  <label htmlFor="autoAcceptOrders" className="toggle-title">Auto-Accept Incoming Orders</label>
-                  <p className="toggle-desc">Automatically accept NEW DINE_IN orders after 5 minutes on the server.</p>
+                  <label htmlFor="kitchenEnabled" className="toggle-title">Kitchen Display System (KDS) Workflow</label>
+                  <p className="toggle-desc">
+                    {formData.kitchenEnabled
+                      ? 'Enabled: Full KDS workflow. Orders are dispatched to the kitchen queue and must be marked READY before billing.'
+                      : 'Disabled: Kitchen-free operation. Orders bypass kitchen status requirements and can be billed directly.'}
+                  </p>
                   <div className="toggle-status-info">
-                    {formData.autoAcceptOrders ? (
-                      <span className="badge-info-green">🟢 5 minute server-side auto acceptance</span>
+                    {formData.kitchenEnabled ? (
+                      <span className="badge-info-green">🟢 Kitchen Mode Enabled (KDS active; READY required for billing)</span>
                     ) : (
-                      <span className="badge-info-gray">⚪ Manual kitchen acceptance required</span>
+                      <span className="badge-info-gray">⚪ Kitchen-Free Mode (Direct billing enabled without KDS)</span>
                     )}
                   </div>
                 </div>
                 <label className="switch">
                   <input
                     type="checkbox"
+                    id="kitchenEnabled"
+                    name="kitchenEnabled"
+                    checked={formData.kitchenEnabled}
+                    onChange={handleKitchenModeToggle}
+                    disabled={isSaving}
+                  />
+                  <span className="slider round"></span>
+                </label>
+              </div>
+            </div>
+
+            {/* Auto Accept Incoming Orders */}
+            <div
+              className={`toggle-group-card inline-toggle ${!formData.kitchenEnabled ? 'disabled-toggle-card' : ''}`}
+              onClick={!formData.kitchenEnabled ? handleAutoAcceptWrapperClick : undefined}
+            >
+              <div className="toggle-header">
+                <div>
+                  <label htmlFor="autoAcceptOrders" className="toggle-title">Auto-Accept Incoming Orders</label>
+                  <p className="toggle-desc">Automatically accept NEW DINE_IN orders after 5 minutes on the server.</p>
+                  <div className="toggle-status-info">
+                    {!formData.kitchenEnabled ? (
+                      <span className="badge-info-amber">⚠️ Disabled: Kitchen Display System (KDS) must be enabled first</span>
+                    ) : formData.autoAcceptOrders ? (
+                      <span className="badge-info-green">🟢 5 minute server-side auto acceptance</span>
+                    ) : (
+                      <span className="badge-info-gray">⚪ Manual kitchen acceptance required</span>
+                    )}
+                  </div>
+                </div>
+                <label
+                  className="switch"
+                  title={
+                    !formData.kitchenEnabled
+                      ? 'Kitchen Display System (KDS) must be enabled before Auto-Accept Orders can be turned on'
+                      : (formData.autoAcceptOrders ? 'Disable Auto-Accept' : 'Enable Auto-Accept')
+                  }
+                >
+                  <input
+                    type="checkbox"
                     id="autoAcceptOrders"
                     name="autoAcceptOrders"
                     checked={formData.autoAcceptOrders}
-                    onChange={handleInputChange}
+                    onChange={handleAutoAcceptToggle}
                     disabled={isSaving}
                   />
                   <span className="slider round"></span>
@@ -492,7 +635,6 @@ export const SettingsPage = () => {
             </div>
           </div>
         </div>
-
 
         {/* Action Controls */}
         <div className="settings-actions">
@@ -520,6 +662,89 @@ export const SettingsPage = () => {
           </button>
         </div>
       </form>
+
+      {/* Confirmation Modal for Kitchen Mode Switch */}
+      {showKitchenModal && (
+        <div
+          className="modal-overlay modal-backdrop"
+          onClick={isSaving ? undefined : cancelKitchenModeChange}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="kitchen-modal-title"
+        >
+          <div
+            className="modal-container modal-content"
+            style={{ maxWidth: '520px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3 id="kitchen-modal-title">Confirm Kitchen Mode Change</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={cancelKitchenModeChange}
+                disabled={isSaving}
+                aria-label="Close confirmation dialog"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {pendingKitchenEnabled ? (
+                <div>
+                  <p className="mb-2">
+                    You are switching to <strong>Kitchen-Enabled (KDS) Mode</strong>.
+                  </p>
+                  <p className="text-muted mb-3" style={{ fontSize: '0.95rem' }}>
+                    Orders will be dispatched to kitchen display screens and must reach <strong>READY</strong> status before bills can be generated.
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <p className="mb-2">
+                    You are switching to <strong>Kitchen-Free Mode</strong>.
+                  </p>
+                  <p className="text-muted mb-3" style={{ fontSize: '0.95rem' }}>
+                    Active orders can be billed directly by administrators without requiring kitchen status transitions. Existing staff accounts, historical orders, bills, and payments will be preserved.
+                  </p>
+                  <div className="alert alert-info mb-2" style={{ fontSize: '0.9rem', backgroundColor: '#e0f2fe', borderColor: '#bae6fd', color: '#0369a1', padding: '0.6rem 0.75rem', borderRadius: '6px' }}>
+                    <strong>Note:</strong> Auto-Accept Incoming Orders will automatically be turned <strong>OFF</strong>.
+                  </div>
+                </div>
+              )}
+              <div className="alert alert-warning mb-0" style={{ fontSize: '0.9rem' }}>
+                <strong>Important:</strong> Active in-progress orders are not cancelled or reset. Ensure your team is aligned before saving.
+              </div>
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '1rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={cancelKitchenModeChange}
+                disabled={isSaving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={confirmKitchenModeChange}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <>
+                    <span className="spinner-sm"></span> Updating Mode...
+                  </>
+                ) : (
+                  'Confirm Mode Change'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

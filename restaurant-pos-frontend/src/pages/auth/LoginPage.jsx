@@ -71,8 +71,12 @@ export const LoginPage = () => {
       if (err.message && err.message.includes('only for Admin and Kitchen')) {
         setServerError(err.message);
       } else if (err.response) {
-        if (err.response.status === 401) {
+        if (err.response.data && err.response.data.message) {
+          setServerError(err.response.data.message);
+        } else if (err.response.status === 401) {
           setServerError('Invalid email or password.');
+        } else if (err.response.status === 403) {
+          setServerError('Account or restaurant is deactivated.');
         } else {
           setServerError('Something went wrong. Please try again.');
         }
@@ -90,7 +94,7 @@ export const LoginPage = () => {
     <div className="page-container auth-page">
       <div className="card auth-card">
         <div className="auth-header">
-          <h1 className="app-title">Restaurant POS</h1>
+          <h1 className="app-title">AnnaDhara</h1>
           <h2 className="section-title">Login</h2>
           <p className="subtitle">Sign in with your Admin or Kitchen account</p>
         </div>

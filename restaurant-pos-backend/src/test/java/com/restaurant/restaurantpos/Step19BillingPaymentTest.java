@@ -124,6 +124,8 @@ public class Step19BillingPaymentTest {
         takeawayOrderReady.setTaxAmount(new BigDecimal("0.00"));
         takeawayOrderReady.setDiscountAmount(new BigDecimal("0.00"));
         takeawayOrderReady.setTotalAmount(new BigDecimal("50.00"));
+
+        lenient().when(userRepository.countByRestaurantIdAndRoleNameIgnoreCase(any(), any())).thenReturn(1L);
     }
 
     // 1. ADMIN generates bill for READY DINE_IN order -> Table becomes BILLING

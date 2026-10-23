@@ -16,6 +16,8 @@
 
 	<properties>
 		<java.version>17</java.version>
+		<flyway.skip>true</flyway.skip>
+		<flyway.locations>filesystem:src/main/resources/db/migration-unauthorized</flyway.locations>
 	</properties>
 
 	<dependencies>
@@ -113,6 +115,35 @@
 						</exclude>
 					</excludes>
 				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.flywaydb</groupId>
+				<artifactId>flyway-maven-plugin</artifactId>
+				<version>${flyway.version}</version>
+				<configuration>
+					<skip>${flyway.skip}</skip>
+					<url>${env.DB_URL}</url>
+					<user>${env.DB_USERNAME}</user>
+					<password>${env.DB_PASSWORD}</password>
+					<locations>
+						<location>${flyway.locations}</location>
+					</locations>
+					<failOnMissingLocations>true</failOnMissingLocations>
+					<baselineOnMigrate>false</baselineOnMigrate>
+					<initSql>SET lock_timeout = '10s'; SET statement_timeout = '30s';</initSql>
+				</configuration>
+				<dependencies>
+					<dependency>
+						<groupId>org.postgresql</groupId>
+						<artifactId>postgresql</artifactId>
+						<version>${postgresql.version}</version>
+					</dependency>
+					<dependency>
+						<groupId>org.flywaydb</groupId>
+						<artifactId>flyway-database-postgresql</artifactId>
+						<version>${flyway.version}</version>
+					</dependency>
+				</dependencies>
 			</plugin>
 		</plugins>
 	</build>

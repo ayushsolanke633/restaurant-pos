@@ -73,7 +73,7 @@ class _AuthCheckPageState extends State<AuthCheckPage> {
             children: [
               CircularProgressIndicator(),
               SizedBox(height: 16),
-              Text('Discovering POS Server...'),
+              Text('Discovering AnnaDhara Server...'),
             ],
           ),
         ),

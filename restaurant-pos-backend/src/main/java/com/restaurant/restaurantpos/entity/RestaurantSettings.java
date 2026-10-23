@@ -70,6 +70,9 @@ public class RestaurantSettings {
     @Column(name = "auto_accept_orders", nullable = false)
     private Boolean autoAcceptOrders = false;
 
+    @Column(name = "kitchen_enabled", nullable = false)
+    private Boolean kitchenEnabled = true;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -89,10 +92,17 @@ public class RestaurantSettings {
         if (this.timezone == null) this.timezone = "Asia/Kolkata";
         if (this.invoicePrefix == null) this.invoicePrefix = "INV";
         if (this.autoAcceptOrders == null) this.autoAcceptOrders = false;
+        if (this.kitchenEnabled == null) this.kitchenEnabled = true;
+        if (!Boolean.TRUE.equals(this.kitchenEnabled)) {
+            this.autoAcceptOrders = false;
+        }
     }
 
     @PreUpdate
     protected void onUpdate() {
         this.updatedAt = LocalDateTime.now();
+        if (!Boolean.TRUE.equals(this.kitchenEnabled)) {
+            this.autoAcceptOrders = false;
+        }
     }
 }

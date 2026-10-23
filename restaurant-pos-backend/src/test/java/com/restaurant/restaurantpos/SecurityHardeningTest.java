@@ -23,6 +23,9 @@ import org.springframework.http.ResponseEntity;
 import com.restaurant.restaurantpos.security.RequestLoggingFilter;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -259,9 +262,12 @@ public class SecurityHardeningTest {
             assertTrue(content.contains("spring.datasource.password=${DB_PASSWORD}"), configPath + " must require ${DB_PASSWORD}");
             assertFalse(content.matches("(?s).*spring\\.datasource\\.password=\\$\\{DB_PASSWORD:.*\\}.*"), configPath + " must not contain fallback default for DB_PASSWORD");
 
-            // Must support DB_URL and DB_USERNAME environment variables
-            assertTrue(content.contains("spring.datasource.url=${DB_URL:"), configPath + " must support ${DB_URL}");
-            assertTrue(content.contains("spring.datasource.username=${DB_USERNAME:"), configPath + " must support ${DB_USERNAME}");
+            // Must require DB_URL and DB_USERNAME without fallback default (SEC-P03-F06, SEC-P03-F08)
+            assertTrue(content.contains("spring.datasource.url=${DB_URL}"), configPath + " must require ${DB_URL}");
+            assertFalse(content.matches("(?s).*spring\\.datasource\\.url=\\$\\{DB_URL:.*\\}.*"), configPath + " must not contain fallback default for DB_URL");
+
+            assertTrue(content.contains("spring.datasource.username=${DB_USERNAME}"), configPath + " must require ${DB_USERNAME}");
+            assertFalse(content.matches("(?s).*spring\\.datasource\\.username=\\$\\{DB_USERNAME:.*\\}.*"), configPath + " must not contain fallback default for DB_USERNAME");
         }
     }
 
@@ -356,5 +362,52 @@ public class SecurityHardeningTest {
                 jakarta.servlet.http.HttpServletResponse.class,
                 jakarta.servlet.FilterChain.class);
         assertNotNull(doFilterMethod);
+    }
+
+    // =========================================================================
+    // 6. Login Account Enumeration Prevention (SEC-P03-F03)
+    // =========================================================================
+
+    @Test
+    @DisplayName("F03: Login failure normalization prevents account enumeration between nonexistent email and bad password")
+    void testLoginFailureNormalizationPreventsAccountEnumeration() {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+        // 1. Non-existent email throws UsernameNotFoundException
+        UsernameNotFoundException notFoundEx = new UsernameNotFoundException("User not found with email: non_existent_admin@test.com");
+        ResponseEntity<Map<String, String>> notFoundResponse = handler.handleAuthenticationException(notFoundEx);
+
+        // 2. Incorrect password throws BadCredentialsException
+        BadCredentialsException badCredEx = new BadCredentialsException("Bad credentials");
+        ResponseEntity<Map<String, String>> badCredResponse = handler.handleAuthenticationException(badCredEx);
+
+        // Assert identical HTTP 401 status
+        assertEquals(HttpStatus.UNAUTHORIZED, notFoundResponse.getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED, badCredResponse.getStatusCode());
+
+        // Assert identical generic payload
+        assertNotNull(notFoundResponse.getBody());
+        assertNotNull(badCredResponse.getBody());
+        assertEquals("Invalid email or password", notFoundResponse.getBody().get("message"));
+        assertEquals("Invalid email or password", badCredResponse.getBody().get("message"));
+        assertEquals(notFoundResponse.getBody(), badCredResponse.getBody(),
+                "Non-existent email and incorrect password responses must be identical to prevent enumeration");
+
+        // Assert sensitive account details are NOT exposed
+        assertFalse(notFoundResponse.getBody().get("message").contains("User not found"));
+        assertFalse(notFoundResponse.getBody().get("message").contains("non_existent_admin@test.com"));
+    }
+
+    @Test
+    @DisplayName("F03: Deactivated account returns HTTP 403 without leaking credentials")
+    void testDeactivatedAccountHandling() {
+        GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+        DisabledException disabledUserEx = new DisabledException("User is deactivated");
+        ResponseEntity<Map<String, String>> response = handler.handleDisabledException(disabledUserEx);
+
+        assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("User is deactivated", response.getBody().get("message"));
     }
 }

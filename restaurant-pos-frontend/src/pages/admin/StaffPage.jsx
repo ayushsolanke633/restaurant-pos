@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import useAuth from '../../hooks/useAuth';
+import useAutoDismiss from '../../hooks/useAutoDismiss';
 import staffService from '../../services/staffService';
 import StaffModal from '../../components/admin/StaffModal';
 
 export const StaffPage = () => {
   const { user } = useAuth();
-  const restaurantId = user?.restaurantId || 1;
+  const restaurantId = user?.restaurantId;
   const currentUserId = user?.userId;
 
   const [staffMembers, setStaffMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  useAutoDismiss(successMsg, () => setSuccessMsg(''));
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -24,6 +27,7 @@ export const StaffPage = () => {
   const [confirmDeactivateId, setConfirmDeactivateId] = useState(null);
 
   const fetchStaffMembers = useCallback(async () => {
+    if (!restaurantId) return;
     setLoading(true);
     setError('');
     try {
@@ -64,7 +68,6 @@ export const StaffPage = () => {
       setSuccessMsg('Staff member deactivated successfully.');
       setConfirmDeactivateId(null);
       fetchStaffMembers();
-      setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {
       setError(err.response?.data?.message || err.message || 'Failed to deactivate staff member');
     }
@@ -76,7 +79,6 @@ export const StaffPage = () => {
       await staffService.activateStaffMember(member.id, member);
       setSuccessMsg(`Staff member ${member.name} activated successfully.`);
       fetchStaffMembers();
-      setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {
       setError(err.response?.data?.message || err.message || 'Failed to activate staff member');
     }
@@ -129,6 +131,8 @@ export const StaffPage = () => {
         return roleName;
     }
   };
+
+  const hasKitchenStaff = staffMembers.some((m) => m.roleName === 'KITCHEN');
 
   return (
     <div className="admin-page staff-page">
@@ -308,9 +312,17 @@ export const StaffPage = () => {
       {/* Staff Form Modal */}
       <StaffModal
         staffMember={selectedStaff}
+        hasKitchenStaff={hasKitchenStaff}
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        onSuccess={fetchStaffMembers}
+        onSuccess={() => {
+          setSuccessMsg(
+            selectedStaff
+              ? 'Staff member updated successfully.'
+              : 'Staff member created successfully.'
+          );
+          fetchStaffMembers();
+        }}
       />
     </div>
   );

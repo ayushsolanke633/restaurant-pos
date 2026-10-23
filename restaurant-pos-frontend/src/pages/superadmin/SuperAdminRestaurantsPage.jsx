@@ -48,6 +48,8 @@ export const SuperAdminRestaurantsPage = () => {
     fetchRestaurants();
   }, [fetchRestaurants]);
 
+
+
   // Handle Restaurant Status Toggle (Deactivate / Activate)
   const handleToggleStatus = async (restaurant) => {
     const nextStatus = !restaurant.isActive;
@@ -84,6 +86,26 @@ export const SuperAdminRestaurantsPage = () => {
       setIsModalOpen(false);
     }
   };
+
+  // Prevent background-page scrolling while modal is open, and handle Escape key
+  useEffect(() => {
+    if (isModalOpen) {
+      const originalOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+
+      const handleKeyDown = (e) => {
+        if (e.key === 'Escape' && !submitting) {
+          handleCloseModal();
+        }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+
+      return () => {
+        document.body.style.overflow = originalOverflow;
+        window.removeEventListener('keydown', handleKeyDown);
+      };
+    }
+  }, [isModalOpen, submitting]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -291,7 +313,7 @@ export const SuperAdminRestaurantsPage = () => {
                     </td>
                     <td>{r.totalUsers} users</td>
                     <td>
-                      <span className={`badge ${r.isActive ? 'badge-success' : 'badge-danger'}`}>
+                      <span className={`status-badge ${r.isActive ? 'status-active' : 'status-inactive'}`}>
                         {r.isActive ? 'ACTIVE' : 'DEACTIVATED'}
                       </span>
                     </td>
@@ -318,15 +340,22 @@ export const SuperAdminRestaurantsPage = () => {
 
       {/* Onboard Restaurant Modal */}
       {isModalOpen && (
-        <div className="modal-backdrop" onClick={handleCloseModal}>
+        <div
+          className="modal-backdrop"
+          onClick={handleCloseModal}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="onboard-modal-title"
+        >
           <div className="modal-card platform-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Onboard New Restaurant Tenant</h2>
+              <h2 id="onboard-modal-title">Onboard New Restaurant Tenant</h2>
               <button
                 type="button"
                 className="btn-close"
                 onClick={handleCloseModal}
                 disabled={submitting}
+                aria-label="Close modal"
               >
                 ✕
               </button>
@@ -338,8 +367,13 @@ export const SuperAdminRestaurantsPage = () => {
               </div>
             )}
 
-            <form onSubmit={handleOnboardSubmit} noValidate>
-              <div className="modal-body modal-scrollable">
+            <form onSubmit={handleOnboardSubmit} noValidate className="platform-modal-form">
+              <div
+                className="modal-body modal-scrollable"
+                tabIndex={0}
+                role="region"
+                aria-label="Onboarding form fields"
+              >
                 <h3 className="form-section-title">Restaurant Details</h3>
                 <div className="form-group">
                   <label htmlFor="restaurantName">Restaurant Name *</label>

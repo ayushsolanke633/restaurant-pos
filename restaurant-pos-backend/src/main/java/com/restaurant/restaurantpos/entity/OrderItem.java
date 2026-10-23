@@ -54,6 +54,12 @@ public class OrderItem {
     @Column(name = "subtotal", nullable = false, precision = 10, scale = 2)
     private BigDecimal subtotal;
 
+    @Column(name = "status", nullable = false)
+    private String status = "NEW";
+
+    @Column(name = "batch_number", nullable = false)
+    private Integer batchNumber = 1;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -64,6 +70,12 @@ public class OrderItem {
     protected void onCreate() {
         if (this.restaurant == null && this.order != null && this.order.getRestaurant() != null) {
             this.restaurant = this.order.getRestaurant();
+        }
+        if (this.status == null) {
+            this.status = "NEW";
+        }
+        if (this.batchNumber == null) {
+            this.batchNumber = 1;
         }
         LocalDateTime now = LocalDateTime.now();
         this.createdAt = now;

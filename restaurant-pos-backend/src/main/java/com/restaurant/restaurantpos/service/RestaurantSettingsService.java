@@ -118,8 +118,22 @@ public class RestaurantSettingsService {
             settings.setReceiptFooter(footer);
         }
 
-        if (request.getAutoAcceptOrders() != null) {
-            settings.setAutoAcceptOrders(request.getAutoAcceptOrders());
+        boolean currentKitchenEnabled = settings.getKitchenEnabled() != null ? settings.getKitchenEnabled() : true;
+        boolean targetKitchenEnabled = request.getKitchenEnabled() != null ? request.getKitchenEnabled() : currentKitchenEnabled;
+
+        if (request.getKitchenEnabled() != null) {
+            settings.setKitchenEnabled(request.getKitchenEnabled());
+        }
+
+        if (!targetKitchenEnabled) {
+            if (Boolean.TRUE.equals(request.getAutoAcceptOrders())) {
+                throw new RuntimeException("Kitchen Display System (KDS) must be enabled before Auto-Accept Orders can be turned on");
+            }
+            settings.setAutoAcceptOrders(false);
+        } else {
+            if (request.getAutoAcceptOrders() != null) {
+                settings.setAutoAcceptOrders(request.getAutoAcceptOrders());
+            }
         }
 
         RestaurantSettings saved = settingsRepository.save(settings);
@@ -147,6 +161,7 @@ public class RestaurantSettingsService {
         defaults.setReceiptFooter("Thank you for visiting!");
         defaults.setInvoicePrefix("INV");
         defaults.setAutoAcceptOrders(false);
+        defaults.setKitchenEnabled(true);
 
         return settingsRepository.save(defaults);
     }
@@ -165,6 +180,7 @@ public class RestaurantSettingsService {
                 .receiptFooter(s.getReceiptFooter())
                 .invoicePrefix(s.getInvoicePrefix())
                 .autoAcceptOrders(s.getAutoAcceptOrders())
+                .kitchenEnabled(s.getKitchenEnabled() != null ? s.getKitchenEnabled() : true)
                 .createdAt(s.getCreatedAt())
                 .updatedAt(s.getUpdatedAt())
                 .build();

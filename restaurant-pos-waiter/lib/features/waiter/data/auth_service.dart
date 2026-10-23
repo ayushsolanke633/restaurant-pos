@@ -19,8 +19,16 @@ class AuthService {
 
   /// Executes login request against backend, checks WAITER role, and securely persists token/user.
   Future<LoginResponse> login(String email, String password) async {
+    final cleanEmail = email.trim();
+    if (cleanEmail.isEmpty || password.isEmpty) {
+      throw const AppException(
+        'Email and password are required.',
+        code: 'VALIDATION_ERROR',
+      );
+    }
+
     final request = LoginRequest(
-      email: email.trim(),
+      email: cleanEmail,
       password: password,
     );
 
@@ -31,7 +39,7 @@ class AuthService {
 
     final loginResponse = LoginResponse.fromJson(responseMap);
 
-    // Phase 10 — Role Enforcement
+    // Role Enforcement — Only Waiter accounts can use the waiter mobile app
     if (loginResponse.role != 'WAITER') {
       await clearSession();
       throw const AppException(
@@ -45,7 +53,7 @@ class AuthService {
       restaurantId: loginResponse.restaurantId,
       role: loginResponse.role,
       name: loginResponse.name,
-      email: loginResponse.email ?? email,
+      email: loginResponse.email ?? cleanEmail,
     );
 
     await _storageService.saveToken(loginResponse.token);
@@ -55,11 +63,15 @@ class AuthService {
   }
 
   /// Logs out the user by revoking backend session and clearing local secure session storage.
+  /// Guaranteed to clear local session even if backend call fails (e.g. HTTP 503) or network is down.
+  /// NOTE: Clearing local credentials ensures this device is signed out, but is not proof that
+  /// a stolen or copied token was successfully revoked on the backend if the server failed
+  /// to persist the revocation record.
   Future<void> logout() async {
     try {
       await _apiClient.post(ApiConstants.logoutEndpoint, body: {});
     } catch (_) {
-      // In case of network errors or server unreachability, still clear local session safely
+      // In case of network errors or server unreachability / 503, still clear local session safely
     } finally {
       await clearSession();
     }

@@ -5,7 +5,7 @@ const RAW_WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL;
 const IS_PROD = import.meta.env.PROD;
 
 function resolveApiBaseUrl() {
-  const url = (RAW_API_BASE_URL || '').trim() || (IS_PROD ? '' : 'http://localhost:8080');
+  let url = (RAW_API_BASE_URL || '').trim() || (IS_PROD ? '' : 'http://localhost:8080');
 
   if (IS_PROD) {
     if (!url) {
@@ -34,7 +34,15 @@ function resolveApiBaseUrl() {
     }
   }
 
-  return url.endsWith('/') ? url.slice(0, -1) : url;
+  // Remove trailing slashes
+  url = url.replace(/\/+$/, '');
+
+  // Guard against duplicate /api prefix when endpoint constants also start with /api
+  if (url.endsWith('/api')) {
+    url = url.slice(0, -4).replace(/\/+$/, '');
+  }
+
+  return url;
 }
 
 export const API_BASE_URL = resolveApiBaseUrl();
@@ -65,7 +73,7 @@ function resolveWsBaseUrl() {
       );
     }
   }
-  return wsUrl.endsWith('/') ? wsUrl.slice(0, -1) : wsUrl;
+  return wsUrl.replace(/\/+$/, '');
 }
 
 export const WS_BASE_URL = resolveWsBaseUrl();
@@ -86,6 +94,7 @@ export const STORAGE_KEYS = {
 
 export const API_ENDPOINTS = {
   LOGIN: '/api/auth/login',
+  LOGOUT: '/api/auth/logout',
   CATEGORIES: '/api/categories',
   MENU_ITEMS: '/api/menu-items',
   TABLES: '/api/tables',

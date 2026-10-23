@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import useAutoDismiss from '../../hooks/useAutoDismiss';
 import categoryService from '../../services/categoryService';
 import CategoryModal from '../../components/admin/CategoryModal';
 
@@ -7,6 +8,8 @@ export const CategoriesPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  useAutoDismiss(successMsg, () => setSuccessMsg(''));
   
   // Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -227,8 +230,8 @@ export const CategoriesPage = () => {
                     </td>
                     <td>
                       <span
-                        className={`badge ${
-                          cat.isActive ? 'badge-success' : 'badge-inactive'
+                        className={`status-badge ${
+                          cat.isActive ? 'status-active' : 'status-inactive'
                         }`}
                       >
                         {cat.isActive ? 'Active' : 'Inactive'}

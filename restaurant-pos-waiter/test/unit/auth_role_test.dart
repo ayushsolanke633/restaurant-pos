@@ -39,13 +39,14 @@ class InMemoryStorageService extends SecureStorageService {
 
   @override
   Future<void> clearSession() async {
-    _data.clear();
+    _data.remove('auth_token');
+    _data.remove('user_data');
   }
 }
 
 void main() {
   group('AuthService Role Enforcement Tests', () {
-    test('login succeeds for WAITER role', () async {
+    test('login succeeds for WAITER role and stores auth token', () async {
       final mockResponse = {
         'token': 'mock.waiter.jwt',
         'tokenType': 'Bearer',
@@ -65,6 +66,7 @@ void main() {
       final response = await authService.login('waiter@example.com', 'password');
 
       expect(response.role, 'WAITER');
+      expect(response.restaurantId, 1);
       expect(await storage.getToken(), 'mock.waiter.jwt');
     });
 
@@ -120,6 +122,26 @@ void main() {
           isA<AppException>()
               .having((e) => e.code, 'code', 'ROLE_DENIED'),
         ),
+      );
+
+      expect(await storage.getToken(), isNull);
+    });
+
+    test('login throws validation error when email or password is empty', () async {
+      final storage = InMemoryStorageService();
+      final authService = AuthService(
+        apiClient: MockApiClient({}),
+        storageService: storage,
+      );
+
+      expect(
+        () async => await authService.login('', 'password'),
+        throwsA(isA<AppException>().having((e) => e.code, 'code', 'VALIDATION_ERROR')),
+      );
+
+      expect(
+        () async => await authService.login('waiter@example.com', ''),
+        throwsA(isA<AppException>().having((e) => e.code, 'code', 'VALIDATION_ERROR')),
       );
     });
   });

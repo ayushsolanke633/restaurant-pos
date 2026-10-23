@@ -13,6 +13,8 @@ import com.restaurant.restaurantpos.repository.RestaurantSettingsRepository;
 import com.restaurant.restaurantpos.repository.RoleRepository;
 import com.restaurant.restaurantpos.repository.UserRepository;
 import com.restaurant.restaurantpos.security.RestaurantWebSocketSessionManager;
+import com.restaurant.restaurantpos.security.TenantTokenVersionManager;
+import com.restaurant.restaurantpos.security.WebSocketSessionRevocationManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Sort;
@@ -35,6 +37,8 @@ public class PlatformOnboardingService {
     private final RoleRepository roleRepository;
     private final BCryptPasswordEncoder passwordEncoder;
     private final RestaurantWebSocketSessionManager webSocketSessionManager;
+    private final TenantTokenVersionManager tenantTokenVersionManager;
+    private final WebSocketSessionRevocationManager webSocketSessionRevocationManager;
 
     public PlatformOnboardingService(
             RestaurantRepository restaurantRepository,
@@ -43,12 +47,27 @@ public class PlatformOnboardingService {
             RoleRepository roleRepository,
             BCryptPasswordEncoder passwordEncoder,
             RestaurantWebSocketSessionManager webSocketSessionManager) {
+        this(restaurantRepository, restaurantSettingsRepository, userRepository, roleRepository, passwordEncoder, webSocketSessionManager, null, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public PlatformOnboardingService(
+            RestaurantRepository restaurantRepository,
+            RestaurantSettingsRepository restaurantSettingsRepository,
+            UserRepository userRepository,
+            RoleRepository roleRepository,
+            BCryptPasswordEncoder passwordEncoder,
+            RestaurantWebSocketSessionManager webSocketSessionManager,
+            @org.springframework.context.annotation.Lazy TenantTokenVersionManager tenantTokenVersionManager,
+            @org.springframework.context.annotation.Lazy WebSocketSessionRevocationManager webSocketSessionRevocationManager) {
         this.restaurantRepository = restaurantRepository;
         this.restaurantSettingsRepository = restaurantSettingsRepository;
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.webSocketSessionManager = webSocketSessionManager;
+        this.tenantTokenVersionManager = tenantTokenVersionManager;
+        this.webSocketSessionRevocationManager = webSocketSessionRevocationManager;
     }
 
     /**
@@ -142,15 +161,32 @@ public class PlatformOnboardingService {
         Restaurant restaurant = restaurantRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Restaurant not found with id: " + id));
 
+        boolean statusChanged = !Boolean.valueOf(isActive).equals(restaurant.getIsActive());
+
         restaurant.setIsActive(isActive);
         Restaurant saved = restaurantRepository.save(restaurant);
 
-        if (!isActive) {
-            log.info("Deactivating restaurant ID={}. Invalidating active WebSocket sessions.", id);
-            webSocketSessionManager.deactivateRestaurant(id);
-        } else {
-            log.info("Reactivating restaurant ID={}.", id);
-            webSocketSessionManager.reactivateRestaurant(id);
+        if (statusChanged) {
+            if (!isActive) {
+                log.info("Deactivating restaurant ID={}. Invalidating active WebSocket sessions and tokens.", id);
+                if (tenantTokenVersionManager != null) {
+                    tenantTokenVersionManager.onRestaurantDeactivated(id);
+                }
+                if (webSocketSessionManager != null) {
+                    webSocketSessionManager.deactivateRestaurant(id);
+                }
+                if (webSocketSessionRevocationManager != null) {
+                    webSocketSessionRevocationManager.invalidateSessionsForRestaurant(id);
+                }
+            } else {
+                log.info("Reactivating restaurant ID={}.", id);
+                if (webSocketSessionManager != null) {
+                    webSocketSessionManager.reactivateRestaurant(id);
+                }
+                if (tenantTokenVersionManager != null) {
+                    tenantTokenVersionManager.onRestaurantReactivated(id);
+                }
+            }
         }
 
         return mapToPlatformResponse(saved);

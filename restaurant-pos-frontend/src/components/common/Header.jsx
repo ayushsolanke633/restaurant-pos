@@ -8,7 +8,7 @@ export const Header = () => {
   return (
     <header className="app-header">
       <div className="header-brand">
-        <span className="brand-title">Restaurant POS</span>
+        <span className="brand-title">AnnaDhara</span>
       </div>
 
       <div className="header-right">

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import useAuth from '../../hooks/useAuth';
+import useAutoDismiss from '../../hooks/useAutoDismiss';
 import orderService from '../../services/orderService';
+import settingsService from '../../services/settingsService';
 import KitchenWebSocketClient from '../../services/websocketService';
 import OrderModal from '../../components/admin/OrderModal';
 import OrderDetailsModal from '../../components/admin/OrderDetailsModal';
@@ -9,13 +11,15 @@ import { CURRENCY_SYMBOL } from '../../utils/constants';
 
 export const OrdersPage = () => {
   const { user } = useAuth();
-  const restaurantId = user?.restaurantId || 1;
+  const restaurantId = user?.restaurantId;
   const wsClientRef = useRef(null);
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  useAutoDismiss(successMsg, () => setSuccessMsg(''));
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -30,6 +34,20 @@ export const OrdersPage = () => {
   const [billModalOrder, setBillModalOrder] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [kitchenEnabled, setKitchenEnabled] = useState(true);
+
+  // Fetch restaurant kitchen mode setting
+  useEffect(() => {
+    const fetchKitchenSetting = async () => {
+      try {
+        const settings = await settingsService.getSettings();
+        setKitchenEnabled(settings?.kitchenEnabled !== false);
+      } catch {
+        setKitchenEnabled(true);
+      }
+    };
+    fetchKitchenSetting();
+  }, [restaurantId]);
 
   // Fetch orders from API
   const fetchOrders = useCallback(async (showLoading = true) => {
@@ -493,8 +511,8 @@ export const OrdersPage = () => {
                             Details
                           </button>
 
-                          {/* Generate Bill button for READY orders */}
-                          {isReady && (
+                          {/* Generate Bill button for READY orders or active orders in kitchen-free mode */}
+                          {(isReady || (!kitchenEnabled && (isNew || ord.status === 'ACCEPTED' || ord.status === 'PREPARING'))) && (
                             <button
                               className="btn-action btn-activate"
                               onClick={() => handleOpenBillModal(ord)}
@@ -578,6 +596,7 @@ export const OrdersPage = () => {
         }}
         order={billModalOrder}
         onPaymentSuccess={handlePaymentSuccess}
+        onBillGenerated={() => fetchOrders(false)}
       />
     </div>
   );

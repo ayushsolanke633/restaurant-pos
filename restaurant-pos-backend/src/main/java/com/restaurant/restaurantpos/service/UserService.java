@@ -22,8 +22,6 @@ import java.util.stream.Collectors;
 @Service
 public class UserService {
 
-    private static final Set<String> ALLOWED_ROLES = Set.of("ADMIN", "WAITER", "KITCHEN");
-
     private final UserRepository userRepository;
     private final RestaurantRepository restaurantRepository;
     private final RoleRepository roleRepository;
@@ -51,17 +49,39 @@ public class UserService {
         }
         if (request.getRestaurantId() != null) {
             securityUtils.validateTenantAccess(request.getRestaurantId());
+            if (!request.getRestaurantId().equals(currentRestaurantId)) {
+                throw new AccessDeniedException("Cannot create staff for another restaurant");
+            }
         }
 
         Long targetRestaurantId = currentRestaurantId;
 
-        Restaurant restaurant = restaurantRepository.findById(targetRestaurantId)
+        // Acquire transactional write lock on the restaurant row to safely serialize staff creation per restaurant against concurrent requests
+        Restaurant restaurant = restaurantRepository.findByIdForUpdate(targetRestaurantId)
+                .or(() -> restaurantRepository.findById(targetRestaurantId))
                 .orElseThrow(() -> new RuntimeException("Restaurant not found with id: " + targetRestaurantId));
+
+        if (request.getRoleId() == null) {
+            throw new RuntimeException("Role ID is required");
+        }
 
         Role role = roleRepository.findById(request.getRoleId())
                 .orElseThrow(() -> new RuntimeException("Role not found with id: " + request.getRoleId()));
 
-        validateRoleName(role.getName());
+        String roleName = role.getName();
+        if ("ADMIN".equalsIgnoreCase(roleName) || "SUPER_ADMIN".equalsIgnoreCase(roleName)) {
+            throw new AccessDeniedException("Invalid role: Admin cannot create " + roleName + " accounts");
+        }
+        if (!"WAITER".equalsIgnoreCase(roleName) && !"KITCHEN".equalsIgnoreCase(roleName)) {
+            throw new AccessDeniedException("Invalid role for staff creation: Only WAITER and KITCHEN roles are permitted");
+        }
+
+        if ("KITCHEN".equalsIgnoreCase(roleName)) {
+            Long existingKitchenCount = userRepository.countByRestaurantIdAndRoleNameIgnoreCase(targetRestaurantId, "KITCHEN");
+            if (existingKitchenCount != null && existingKitchenCount > 0) {
+                throw new RuntimeException("Only one kitchen staff account is allowed per restaurant. A kitchen account already exists for this restaurant.");
+            }
+        }
 
         if (request.getPassword() == null || request.getPassword().isBlank()) {
             throw new RuntimeException("Password is required when creating a user");
@@ -131,7 +151,23 @@ public class UserService {
         if (request.getRoleId() != null && !request.getRoleId().equals(user.getRole().getId())) {
             Role newRole = roleRepository.findById(request.getRoleId())
                     .orElseThrow(() -> new RuntimeException("Role not found with id: " + request.getRoleId()));
-            validateRoleName(newRole.getName());
+            String newRoleName = newRole.getName();
+            if ("ADMIN".equalsIgnoreCase(newRoleName) || "SUPER_ADMIN".equalsIgnoreCase(newRoleName)) {
+                throw new AccessDeniedException("Invalid role: Admin cannot assign " + newRoleName + " role");
+            }
+            if (!"WAITER".equalsIgnoreCase(newRoleName) && !"KITCHEN".equalsIgnoreCase(newRoleName)) {
+                throw new AccessDeniedException("Invalid role for staff: Only WAITER and KITCHEN roles are permitted");
+            }
+            if ("KITCHEN".equalsIgnoreCase(newRoleName)) {
+                Long restaurantId = user.getRestaurant().getId();
+                restaurantRepository.findByIdForUpdate(restaurantId)
+                        .or(() -> restaurantRepository.findById(restaurantId))
+                        .orElseThrow(() -> new RuntimeException("Restaurant not found with id: " + restaurantId));
+                Long existingKitchenCount = userRepository.countByRestaurantIdAndRoleNameIgnoreCase(restaurantId, "KITCHEN");
+                if (existingKitchenCount != null && existingKitchenCount > 0) {
+                    throw new RuntimeException("Only one kitchen staff account is allowed per restaurant. A kitchen account already exists for this restaurant.");
+                }
+            }
             user.setRole(newRole);
         }
 
@@ -144,15 +180,26 @@ public class UserService {
         if (request.getPhone() != null) {
             user.setPhone(request.getPhone());
         }
+        boolean statusChanged = false;
         if (request.getIsActive() != null) {
             if (!request.getIsActive() && user.getRole() != null && "ADMIN".equalsIgnoreCase(user.getRole().getName())) {
                 throw new RuntimeException("ADMIN users cannot be deactivated");
             }
-            user.setIsActive(request.getIsActive());
+            if (!request.getIsActive().equals(user.getIsActive())) {
+                user.setIsActive(request.getIsActive());
+                statusChanged = true;
+            }
         }
 
+        boolean passwordChanged = false;
         if (request.getPassword() != null && !request.getPassword().isBlank()) {
             user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+            passwordChanged = true;
+        }
+
+        if (statusChanged || passwordChanged) {
+            int currentVersion = user.getTokenVersion() != null ? user.getTokenVersion() : 1;
+            user.setTokenVersion(currentVersion + 1);
         }
 
         User updatedUser = userRepository.save(user);
@@ -164,9 +211,13 @@ public class UserService {
         User user = findUserById(id);
         securityUtils.validateTenantAccess(user.getRestaurant().getId());
         if (user.getRole() != null && "ADMIN".equalsIgnoreCase(user.getRole().getName())) { throw new RuntimeException("ADMIN users cannot be deactivated"); }
-        user.setIsActive(false);
-        User deactivatedUser = userRepository.save(user);
-        return mapToResponse(deactivatedUser);
+        if (Boolean.TRUE.equals(user.getIsActive())) {
+            user.setIsActive(false);
+            int currentVersion = user.getTokenVersion() != null ? user.getTokenVersion() : 1;
+            user.setTokenVersion(currentVersion + 1);
+            user = userRepository.save(user);
+        }
+        return mapToResponse(user);
     }
 
     private User findUserById(Long id) {
@@ -187,12 +238,6 @@ public class UserService {
             throw new RuntimeException("User not found with id: " + id);
         }
         return user;
-    }
-
-    private void validateRoleName(String roleName) {
-        if (!ALLOWED_ROLES.contains(roleName)) {
-            throw new RuntimeException("Invalid role");
-        }
     }
 
     private UserResponse mapToResponse(User user) {

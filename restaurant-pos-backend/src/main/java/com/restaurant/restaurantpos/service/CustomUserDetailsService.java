@@ -23,18 +23,25 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
-        User user = userRepository.findByEmail(email)
+        String cleanEmail = email != null ? email.trim() : "";
+        User user = userRepository.findByEmail(cleanEmail)
+                .or(() -> userRepository.findByEmailIgnoreCase(cleanEmail))
                 .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email));
 
         if (!Boolean.TRUE.equals(user.getIsActive())) {
             throw new DisabledException("User is deactivated");
         }
 
-        if (user.getRestaurant() != null && !Boolean.TRUE.equals(user.getRestaurant().getIsActive())) {
-            throw new DisabledException("Restaurant is deactivated");
+        String roleName = user.getRole() != null ? user.getRole().getName() : "USER";
+        if (!"SUPER_ADMIN".equalsIgnoreCase(roleName)) {
+            if (user.getRestaurant() == null) {
+                throw new DisabledException("Tenant user must belong to a restaurant");
+            }
+            if (!Boolean.TRUE.equals(user.getRestaurant().getIsActive())) {
+                throw new DisabledException("Restaurant is deactivated");
+            }
         }
 
-        String roleName = user.getRole() != null ? user.getRole().getName() : "USER";
         SimpleGrantedAuthority authority = new SimpleGrantedAuthority("ROLE_" + roleName);
 
         Long restaurantId = user.getRestaurant() != null ? user.getRestaurant().getId() : null;
@@ -46,7 +53,8 @@ public class CustomUserDetailsService implements UserDetailsService {
                 user.getEmail(),
                 user.getPasswordHash(),
                 user.getIsActive(),
-                Collections.singletonList(authority)
+                Collections.singletonList(authority),
+                user.getTokenVersion() != null ? user.getTokenVersion() : 1
         );
     }
 }

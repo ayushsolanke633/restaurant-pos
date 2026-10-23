@@ -2,6 +2,8 @@ package com.restaurant.restaurantpos.security;
 
 import com.restaurant.restaurantpos.service.CustomUserDetailsService;
 import com.restaurant.restaurantpos.service.JwtService;
+import com.restaurant.restaurantpos.service.TokenRevocationService;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.stomp.StompCommand;
@@ -16,11 +18,16 @@ import org.springframework.stereotype.Component;
 
 import java.security.Principal;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Component
 public class StompAuthChannelInterceptor implements ChannelInterceptor {
+
+    public static final String SESSION_ATTR_JTI = "WS_AUTH_JTI";
+    public static final String SESSION_ATTR_USER_ID = "WS_AUTH_USER_ID";
+    public static final String SESSION_ATTR_REST_ID = "WS_AUTH_REST_ID";
 
     private static final Pattern KITCHEN_TOPIC_PATTERN = Pattern.compile("^/topic/restaurants/(\\d+)/kitchen/orders$");
     private static final Pattern NOTIFICATION_TOPIC_PATTERN = Pattern.compile("^/topic/restaurants/(\\d+)/notifications/(\\d+)$");
@@ -29,16 +36,35 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
     private final CustomUserDetailsService userDetailsService;
     private final WaiterSessionManager waiterSessionManager;
     private final RestaurantWebSocketSessionManager restaurantWebSocketSessionManager;
+    private final TokenRevocationService tokenRevocationService;
+    private final WebSocketSessionRevocationManager webSocketSessionRevocationManager;
 
     public StompAuthChannelInterceptor(JwtService jwtService, CustomUserDetailsService userDetailsService) {
-        this(jwtService, userDetailsService, null, null);
+        this(jwtService, userDetailsService, null, null, null, null);
     }
 
     public StompAuthChannelInterceptor(
             JwtService jwtService,
             CustomUserDetailsService userDetailsService,
             WaiterSessionManager waiterSessionManager) {
-        this(jwtService, userDetailsService, waiterSessionManager, null);
+        this(jwtService, userDetailsService, waiterSessionManager, null, null, null);
+    }
+
+    public StompAuthChannelInterceptor(
+            JwtService jwtService,
+            CustomUserDetailsService userDetailsService,
+            WaiterSessionManager waiterSessionManager,
+            RestaurantWebSocketSessionManager restaurantWebSocketSessionManager) {
+        this(jwtService, userDetailsService, waiterSessionManager, restaurantWebSocketSessionManager, null, null);
+    }
+
+    public StompAuthChannelInterceptor(
+            JwtService jwtService,
+            CustomUserDetailsService userDetailsService,
+            WaiterSessionManager waiterSessionManager,
+            RestaurantWebSocketSessionManager restaurantWebSocketSessionManager,
+            TokenRevocationService tokenRevocationService) {
+        this(jwtService, userDetailsService, waiterSessionManager, restaurantWebSocketSessionManager, tokenRevocationService, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -46,11 +72,15 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
             JwtService jwtService,
             CustomUserDetailsService userDetailsService,
             WaiterSessionManager waiterSessionManager,
-            RestaurantWebSocketSessionManager restaurantWebSocketSessionManager) {
+            RestaurantWebSocketSessionManager restaurantWebSocketSessionManager,
+            @Lazy TokenRevocationService tokenRevocationService,
+            @Lazy WebSocketSessionRevocationManager webSocketSessionRevocationManager) {
         this.jwtService = jwtService;
         this.userDetailsService = userDetailsService;
         this.waiterSessionManager = waiterSessionManager;
         this.restaurantWebSocketSessionManager = restaurantWebSocketSessionManager;
+        this.tokenRevocationService = tokenRevocationService;
+        this.webSocketSessionRevocationManager = webSocketSessionRevocationManager;
     }
 
     @Override
@@ -78,6 +108,10 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
 
             if (token != null) {
                 try {
+                    String jti = jwtService.extractJti(token);
+                    if (tokenRevocationService != null && tokenRevocationService.isRevoked(jti)) {
+                        return message;
+                    }
                     String userEmail = jwtService.extractUsername(token);
                     if (userEmail != null) {
                         UserDetails userDetails = userDetailsService.loadUserByUsername(userEmail);
@@ -90,11 +124,29 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                                     restaurantWebSocketSessionManager.registerSession(accessor.getSessionId(), cud.getRestaurantId());
                                 }
                             }
+
+                            // Bind session to token jti and user identity in session revocation manager
+                            if (webSocketSessionRevocationManager != null && accessor.getSessionId() != null) {
+                                Long uid = (userDetails instanceof CustomUserDetails cud) ? cud.getUserId() : null;
+                                Long rid = (userDetails instanceof CustomUserDetails cud) ? cud.getRestaurantId() : null;
+                                webSocketSessionRevocationManager.bindSessionToToken(accessor.getSessionId(), jti, uid, rid);
+                            }
+
                             UsernamePasswordAuthenticationToken authentication =
                                     new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                             StompHeaderAccessor mutableAccessor = StompHeaderAccessor.wrap(message);
                             mutableAccessor.setLeaveMutable(true);
                             mutableAccessor.setUser(authentication);
+
+                            Map<String, Object> sessionAttributes = mutableAccessor.getSessionAttributes();
+                            if (sessionAttributes != null) {
+                                sessionAttributes.put(SESSION_ATTR_JTI, jti);
+                                if (userDetails instanceof CustomUserDetails cud) {
+                                    sessionAttributes.put(SESSION_ATTR_USER_ID, cud.getUserId());
+                                    sessionAttributes.put(SESSION_ATTR_REST_ID, cud.getRestaurantId());
+                                }
+                            }
+
                             return MessageBuilder.createMessage(message.getPayload(), mutableAccessor.getMessageHeaders());
                         }
                     }
@@ -103,6 +155,8 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                 }
             }
         } else if (StompCommand.SUBSCRIBE.equals(accessor.getCommand())) {
+            assertSessionNotRevoked(accessor);
+
             String destination = accessor.getDestination();
             if (destination != null) {
                 Matcher kitchenMatcher = KITCHEN_TOPIC_PATTERN.matcher(destination);
@@ -146,6 +200,8 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                 throw new AccessDeniedException("Access denied: Destination missing");
             }
         } else if (StompCommand.SEND.equals(accessor.getCommand())) {
+            assertSessionNotRevoked(accessor);
+
             String destination = accessor.getDestination();
             if (destination != null && destination.startsWith("/topic")) {
                 throw new AccessDeniedException("Access denied: Client publishing to topic destinations is not allowed");
@@ -155,9 +211,37 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
             if (restaurantWebSocketSessionManager != null) {
                 restaurantWebSocketSessionManager.unregisterSession(accessor.getSessionId());
             }
+            if (webSocketSessionRevocationManager != null) {
+                webSocketSessionRevocationManager.unregisterSession(accessor.getSessionId());
+            }
         }
 
         return message;
+    }
+
+    private void assertSessionNotRevoked(StompHeaderAccessor accessor) {
+        String sessionId = accessor.getSessionId();
+        if (sessionId != null && webSocketSessionRevocationManager != null) {
+            if (webSocketSessionRevocationManager.isSessionRevoked(sessionId)) {
+                throw new AccessDeniedException("Access denied: Token or WebSocket session has been revoked");
+            }
+            String sessionJti = webSocketSessionRevocationManager.getJtiForSession(sessionId);
+            if (sessionJti != null && tokenRevocationService != null && tokenRevocationService.isRevoked(sessionJti)) {
+                webSocketSessionRevocationManager.invalidateSessionsForJti(sessionJti);
+                throw new AccessDeniedException("Access denied: Token has been revoked");
+            }
+        }
+
+        Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
+        if (sessionAttributes != null) {
+            String attrJti = (String) sessionAttributes.get(SESSION_ATTR_JTI);
+            if (attrJti != null && tokenRevocationService != null && tokenRevocationService.isRevoked(attrJti)) {
+                if (webSocketSessionRevocationManager != null) {
+                    webSocketSessionRevocationManager.invalidateSessionsForJti(attrJti);
+                }
+                throw new AccessDeniedException("Access denied: Token has been revoked");
+            }
+        }
     }
 
     private CustomUserDetails getAuthenticatedUser(StompHeaderAccessor accessor) {

@@ -18,6 +18,10 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
 
     List<OrderItem> findByOrderIdAndRestaurantId(Long orderId, Long restaurantId);
 
+    List<OrderItem> findByOrderIdAndBatchNumber(Long orderId, Integer batchNumber);
+
+    List<OrderItem> findByOrderIdAndRestaurantIdAndBatchNumber(Long orderId, Long restaurantId, Integer batchNumber);
+
     Optional<OrderItem> findByIdAndRestaurantId(Long id, Long restaurantId);
 
     void deleteByOrderId(Long orderId);

@@ -436,6 +436,7 @@ public class PlatformOnboardingTest {
             webSocketSessionManager = new RestaurantWebSocketSessionManager();
             stompInterceptor = new StompAuthChannelInterceptor(jwtService, userDetailsService, null, webSocketSessionManager);
             jwtFilter = new JwtAuthenticationFilter(jwtService, userDetailsService);
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
         }
 
         @Test

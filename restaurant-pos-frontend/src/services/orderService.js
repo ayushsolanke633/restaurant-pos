@@ -65,6 +65,17 @@ export const orderService = {
   },
 
   /**
+   * Add items to an existing order
+   * @param {number|string} id - Order ID
+   * @param {Object} itemsData - { orderType, items: [{ menuItemId, quantity, notes }], notes?: string }
+   * @returns {Promise<Object>} OrderResponse
+   */
+  async addItemsToOrder(id, itemsData) {
+    const response = await api.post(`${API_ENDPOINTS.ORDERS}/${id}/items`, itemsData);
+    return response.data;
+  },
+
+  /**
    * Fetch active order for a table
    * @param {number|string} tableId 
    * @returns {Promise<Object>} OrderResponse

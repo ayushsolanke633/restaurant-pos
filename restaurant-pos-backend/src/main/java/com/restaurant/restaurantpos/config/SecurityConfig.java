@@ -33,6 +33,7 @@ public class SecurityConfig {
     private final CustomUserDetailsService userDetailsService;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final com.restaurant.restaurantpos.security.RequestLoggingFilter requestLoggingFilter;
+    private final com.restaurant.restaurantpos.security.LoginRateLimitingFilter loginRateLimitingFilter;
     private final List<String> allowedOrigins;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -40,18 +41,28 @@ public class SecurityConfig {
             CustomUserDetailsService userDetailsService,
             JwtAuthenticationFilter jwtAuthenticationFilter,
             com.restaurant.restaurantpos.security.RequestLoggingFilter requestLoggingFilter,
+            com.restaurant.restaurantpos.security.LoginRateLimitingFilter loginRateLimitingFilter,
             @Value("${app.cors.allowed-origins}") List<String> allowedOrigins) {
         this.userDetailsService = userDetailsService;
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
         this.requestLoggingFilter = requestLoggingFilter;
+        this.loginRateLimitingFilter = loginRateLimitingFilter;
         this.allowedOrigins = allowedOrigins != null ? allowedOrigins : List.of();
     }
 
     public SecurityConfig(
             CustomUserDetailsService userDetailsService,
             JwtAuthenticationFilter jwtAuthenticationFilter,
+            com.restaurant.restaurantpos.security.RequestLoggingFilter requestLoggingFilter,
+            List<String> allowedOrigins) {
+        this(userDetailsService, jwtAuthenticationFilter, requestLoggingFilter, null, allowedOrigins);
+    }
+
+    public SecurityConfig(
+            CustomUserDetailsService userDetailsService,
+            JwtAuthenticationFilter jwtAuthenticationFilter,
             com.restaurant.restaurantpos.security.RequestLoggingFilter requestLoggingFilter) {
-        this(userDetailsService, jwtAuthenticationFilter, requestLoggingFilter, List.of("http://localhost:5173", "http://localhost:5174"));
+        this(userDetailsService, jwtAuthenticationFilter, requestLoggingFilter, null, List.of("http://localhost:5173", "http://localhost:5174"));
     }
 
     @Bean
@@ -122,20 +133,40 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/**", "/api/health", "/api/health/**", "/ws/**").permitAll()
                 .requestMatchers("/api/kitchen/**").hasAnyRole("ADMIN", "KITCHEN")
                 .requestMatchers("/api/orders/waiter/history").hasAnyRole("ADMIN", "WAITER")
+                .requestMatchers(HttpMethod.PATCH, "/api/orders/*/complete").hasRole("ADMIN")
                 .requestMatchers("/api/orders/**").hasAnyRole("ADMIN", "WAITER", "KITCHEN")
                 .requestMatchers(HttpMethod.GET, "/api/categories", "/api/categories/**").hasAnyRole("ADMIN", "WAITER")
                 .requestMatchers(HttpMethod.GET, "/api/menu-items", "/api/menu-items/**").hasAnyRole("ADMIN", "WAITER")
                 .requestMatchers(HttpMethod.GET, "/api/tables", "/api/tables/**").hasAnyRole("ADMIN", "WAITER")
                 .requestMatchers(HttpMethod.GET, "/api/settings").hasAnyRole("ADMIN", "KITCHEN")
                 .requestMatchers("/api/platform/**").hasRole("SUPER_ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/restaurants").hasRole("SUPER_ADMIN")
+                .requestMatchers(HttpMethod.DELETE, "/api/restaurants/**").hasRole("SUPER_ADMIN")
                 .requestMatchers("/api/restaurants/**", "/api/users/**", "/api/categories/**", "/api/menu-items/**", "/api/tables/**", "/api/bills/**", "/api/payments/**", "/api/inventory-items/**", "/api/inventory-transactions/**", "/api/customers/**", "/api/reports/**", "/api/settings/**").hasRole("ADMIN")
 
                 .anyRequest().authenticated()
             )
-            .authenticationProvider(authenticationProvider())
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+            .authenticationProvider(authenticationProvider());
+
+        if (loginRateLimitingFilter != null) {
+            http.addFilterBefore(loginRateLimitingFilter, UsernamePasswordAuthenticationFilter.class);
+        }
+
+        http.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterAfter(requestLoggingFilter, JwtAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    @Bean
+    public org.springframework.boot.web.servlet.FilterRegistrationBean<com.restaurant.restaurantpos.security.LoginRateLimitingFilter> loginRateLimitingFilterRegistration(
+            @org.springframework.beans.factory.annotation.Autowired(required = false) com.restaurant.restaurantpos.security.LoginRateLimitingFilter filter) {
+        org.springframework.boot.web.servlet.FilterRegistrationBean<com.restaurant.restaurantpos.security.LoginRateLimitingFilter> registration =
+                new org.springframework.boot.web.servlet.FilterRegistrationBean<>();
+        if (filter != null) {
+            registration.setFilter(filter);
+        }
+        registration.setEnabled(false);
+        return registration;
     }
 }

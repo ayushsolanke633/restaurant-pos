@@ -82,7 +82,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Text(
-                    'Enter POS server IP or hostname (e.g. 192.168.1.42:8080):',
+                    'Enter AnnaDhara server IP or hostname (e.g. 192.168.1.42:8080):',
                     style: TextStyle(fontSize: 14),
                   ),
                   const SizedBox(height: 12),
@@ -198,10 +198,10 @@ class _ConnectionPageState extends State<ConnectionPage> {
                     const SizedBox(height: 16),
                     Text(
                       _isSearching
-                          ? 'Connecting to Restaurant POS...'
+                          ? 'Connecting to AnnaDhara...'
                           : (_resolvedUrl != null
                               ? 'Connected to Backend'
-                              : 'Could not find Restaurant POS server'),
+                              : 'Could not find AnnaDhara server'),
                       style: theme.textTheme.headlineSmall,
                       textAlign: TextAlign.center,
                     ),
@@ -239,9 +239,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
                         style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
-                      const Text('• Phone and POS laptop are connected to the same Wi-Fi.'),
+                      const Text('• Phone and AnnaDhara server laptop are connected to the same Wi-Fi.'),
                       const SizedBox(height: 4),
-                      const Text('• POS server is running.'),
+                      const Text('• AnnaDhara server is running.'),
                       const SizedBox(height: 4),
                       const Text('• Windows Firewall allows port 8080.'),
                       const SizedBox(height: 24),

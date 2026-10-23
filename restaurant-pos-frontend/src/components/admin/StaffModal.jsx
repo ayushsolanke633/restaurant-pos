@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import staffService, { ROLE_MAP } from '../../services/staffService';
 import useAuth from '../../hooks/useAuth';
 
-export const StaffModal = ({ staffMember, isOpen, onClose, onSuccess }) => {
+export const StaffModal = ({ staffMember, hasKitchenStaff = false, isOpen, onClose, onSuccess }) => {
   const { user } = useAuth();
-  const restaurantId = user?.restaurantId || 1;
+  const restaurantId = user?.restaurantId;
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -16,6 +16,7 @@ export const StaffModal = ({ staffMember, isOpen, onClose, onSuccess }) => {
   const [error, setError] = useState('');
 
   const isEditing = Boolean(staffMember);
+  const isKitchenDisabled = hasKitchenStaff && (!isEditing || staffMember?.roleName !== 'KITCHEN');
 
   useEffect(() => {
     if (isOpen) {
@@ -54,6 +55,18 @@ export const StaffModal = ({ staffMember, isOpen, onClose, onSuccess }) => {
     if (!isEditing && (!password || password.trim().length === 0)) {
       setError('Password is required when creating a new staff member.');
       return;
+    }
+
+    if (!isEditing && roleName === 'KITCHEN' && hasKitchenStaff) {
+      setError('Only one kitchen staff account is allowed per restaurant.');
+      return;
+    }
+
+    if (roleName === 'ADMIN' || roleName === 'SUPER_ADMIN') {
+      if (!isEditing || staffMember?.roleName !== 'ADMIN') {
+        setError('Admin accounts cannot be created.');
+        return;
+      }
     }
 
     const selectedRole = ROLE_MAP[roleName] || ROLE_MAP.WAITER;
@@ -132,6 +145,7 @@ export const StaffModal = ({ staffMember, isOpen, onClose, onSuccess }) => {
                 <select
                   className="form-input"
                   value={roleName}
+                  disabled={isEditing && staffMember?.roleName === 'ADMIN'}
                   onChange={(e) => {
                     const newRole = e.target.value;
                     setRoleName(newRole);
@@ -140,10 +154,22 @@ export const StaffModal = ({ staffMember, isOpen, onClose, onSuccess }) => {
                     }
                   }}
                 >
-                  <option value="WAITER">Waiter</option>
-                  <option value="KITCHEN">Kitchen</option>
-                  <option value="ADMIN">Admin</option>
+                  {isEditing && staffMember?.roleName === 'ADMIN' ? (
+                    <option value="ADMIN">Admin</option>
+                  ) : (
+                    <>
+                      <option value="WAITER">Waiter</option>
+                      <option value="KITCHEN" disabled={isKitchenDisabled}>
+                        Kitchen {isKitchenDisabled ? '(Limit reached)' : ''}
+                      </option>
+                    </>
+                  )}
                 </select>
+                {isKitchenDisabled && (
+                  <p className="text-muted text-xs mt-1" style={{ color: 'var(--text-secondary, #94a3b8)', marginBottom: 0 }}>
+                    Only one kitchen staff account is allowed per restaurant.
+                  </p>
+                )}
               </div>
 
               <div className="form-group">

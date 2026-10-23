@@ -6,7 +6,10 @@ import '../../data/auth_service.dart';
 class LoginPage extends StatefulWidget {
   final AuthService? authService;
 
-  const LoginPage({super.key, this.authService});
+  const LoginPage({
+    super.key,
+    this.authService,
+  });
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -91,7 +94,7 @@ class _LoginPageState extends State<LoginPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Restaurant POS'),
+        title: const Text('AnnaDhara'),
       ),
       body: SafeArea(
         child: Center(
@@ -106,7 +109,7 @@ class _LoginPageState extends State<LoginPage> {
                   children: [
                     const SizedBox(height: 12),
                     Text(
-                      'Restaurant POS',
+                      'AnnaDhara',
                       style: theme.textTheme.headlineMedium,
                       textAlign: TextAlign.center,
                     ),
@@ -118,7 +121,7 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                     if (_errorMessage != null) ...[
                       Container(
                         padding: const EdgeInsets.all(12),

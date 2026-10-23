@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import useAutoDismiss from '../../hooks/useAutoDismiss';
 import { orderService } from '../../services/orderService';
 import { billingService } from '../../services/billingService';
+import settingsService from '../../services/settingsService';
 import BillModal from '../../components/admin/BillModal';
 import { CURRENCY_SYMBOL } from '../../utils/constants';
 
@@ -15,14 +17,31 @@ export const BillingPage = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [actionSuccessMsg, setActionSuccessMsg] = useState(null);
 
-  // Load READY orders (and completed bills if tab active)
+  useAutoDismiss(actionSuccessMsg, () => setActionSuccessMsg(null));
+
+  // Load billable orders (and completed bills if tab active)
   const fetchBillingData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       if (activeTab === 'READY') {
-        const orders = await orderService.getOrders('READY');
-        setReadyOrders(orders || []);
+        const allOrders = await orderService.getOrders();
+        let kitchenEnabled = true;
+        try {
+          const settings = await settingsService.getSettings();
+          kitchenEnabled = settings?.kitchenEnabled !== false;
+        } catch {
+          kitchenEnabled = true;
+        }
+
+        if (kitchenEnabled) {
+          const readyOnly = (allOrders || []).filter(o => o.status === 'READY');
+          setReadyOrders(readyOnly);
+        } else {
+          // Kitchen-free mode: all active orders (not completed, not cancelled) are billable
+          const activeOrders = (allOrders || []).filter(o => o.status !== 'COMPLETED' && o.status !== 'CANCELLED');
+          setReadyOrders(activeOrders);
+        }
       } else {
         // Fetch completed bills/orders
         const bills = await billingService.getAllBills();
@@ -54,9 +73,6 @@ export const BillingPage = () => {
   const handlePaymentSuccess = () => {
     setActionSuccessMsg('Payment completed successfully! Table released.');
     fetchBillingData();
-    setTimeout(() => {
-      setActionSuccessMsg(null);
-    }, 4000);
   };
 
   // Filter ready orders by order id or table name
@@ -245,6 +261,7 @@ export const BillingPage = () => {
         isOpen={isModalOpen}
         onClose={handleModalClose}
         onPaymentSuccess={handlePaymentSuccess}
+        onBillGenerated={() => fetchBillingData()}
       />
     </div>
   );

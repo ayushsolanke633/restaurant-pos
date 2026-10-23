@@ -22,4 +22,6 @@ public class OrderItemResponse {
     private BigDecimal unitPrice;
     private String notes;
     private BigDecimal subtotal;
+    private String status;
+    private Integer batchNumber;
 }

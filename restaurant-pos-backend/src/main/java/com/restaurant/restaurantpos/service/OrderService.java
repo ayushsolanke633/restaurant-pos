@@ -37,6 +37,11 @@ import java.util.stream.Collectors;
 
 import com.restaurant.restaurantpos.event.KitchenOrderEventPublisher;
 
+import com.restaurant.restaurantpos.exception.KitchenWorkflowDisabledException;
+import com.restaurant.restaurantpos.exception.OrderWorkflowConflictException;
+import com.restaurant.restaurantpos.repository.RestaurantSettingsRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+
 @Service
 public class OrderService {
 
@@ -52,6 +57,7 @@ public class OrderService {
     private final KitchenOrderEventPublisher eventPublisher;
     private final NotificationService notificationService;
     private final BillRepository billRepository;
+    private final RestaurantSettingsRepository settingsRepository;
 
     public OrderService(
             OrderRepository orderRepository,
@@ -66,6 +72,27 @@ public class OrderService {
             KitchenOrderEventPublisher eventPublisher,
             NotificationService notificationService,
             BillRepository billRepository) {
+        this(orderRepository, orderItemRepository, orderStatusHistoryRepository,
+             restaurantRepository, tableRepository, menuItemRepository, userRepository,
+             customerRepository, securityUtils, eventPublisher, notificationService,
+             billRepository, null);
+    }
+
+    @Autowired
+    public OrderService(
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            OrderStatusHistoryRepository orderStatusHistoryRepository,
+            RestaurantRepository restaurantRepository,
+            RestaurantTableRepository tableRepository,
+            MenuItemRepository menuItemRepository,
+            UserRepository userRepository,
+            CustomerRepository customerRepository,
+            SecurityUtils securityUtils,
+            KitchenOrderEventPublisher eventPublisher,
+            NotificationService notificationService,
+            BillRepository billRepository,
+            RestaurantSettingsRepository settingsRepository) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
@@ -78,6 +105,7 @@ public class OrderService {
         this.eventPublisher = eventPublisher;
         this.notificationService = notificationService;
         this.billRepository = billRepository;
+        this.settingsRepository = settingsRepository;
     }
 
     @Transactional
@@ -192,6 +220,8 @@ public class OrderService {
             orderItem.setUnitPrice(unitPrice);
             orderItem.setNotes(item.notes);
             orderItem.setSubtotal(itemSubtotal);
+            orderItem.setStatus("NEW");
+            orderItem.setBatchNumber(1);
             orderItemsToSave.add(orderItem);
         }
 
@@ -457,7 +487,7 @@ public class OrderService {
         Long currentUserId = securityUtils.getCurrentUserId();
         String currentRole = securityUtils.getCurrentUserRole();
 
-        Order order = findOrderScoped(id, restaurantId);
+        Order order = findOrderForUpdateScoped(id, restaurantId);
 
         if (billRepository.existsByOrderId(id)) {
             throw new RuntimeException("Cannot add items because a bill has already been generated for this order");
@@ -492,39 +522,35 @@ public class OrderService {
             throw new RuntimeException("Order items list cannot be empty");
         }
 
+        boolean kitchenEnabled = isKitchenModeEnabled(restaurantId);
         List<OrderItem> existingItems = findOrderItemsScoped(id, restaurantId);
         List<OrderItem> itemsToSave = new ArrayList<>();
 
-        for (OrderItemRequest req : request.getItems()) {
-            if (req.getQuantity() == null || req.getQuantity() <= 0) {
-                throw new RuntimeException("Quantity must be greater than 0");
-            }
+        int nextBatch = existingItems.stream()
+                .mapToInt(i -> i.getBatchNumber() != null ? i.getBatchNumber() : 1)
+                .max()
+                .orElse(0) + 1;
 
-            MenuItem menuItem = findMenuItemScoped(req.getMenuItemId(), restaurantId);
+        if (kitchenEnabled) {
 
-            if (!Boolean.TRUE.equals(menuItem.getIsAvailable())) {
-                throw new RuntimeException("Menu item is not available");
-            }
-
-            if (menuItem.getCategory() != null && Boolean.FALSE.equals(menuItem.getCategory().getIsActive())) {
-                throw new RuntimeException("This category is inactive. Please refresh the menu and try again.");
-            }
-
-            BigDecimal unitPrice = menuItem.getPrice();
-            String notes = (req.getNotes() != null && !req.getNotes().isBlank()) ? req.getNotes().trim() : null;
-
-            Optional<OrderItem> existingMatch = existingItems.stream()
-                    .filter(oi -> oi.getMenuItem().getId().equals(menuItem.getId()) && notesMatch(oi.getNotes(), notes))
-                    .findFirst();
-
-            if (existingMatch.isPresent()) {
-                OrderItem existing = existingMatch.get();
-                existing.setQuantity(existing.getQuantity() + req.getQuantity());
-                existing.setSubtotal(unitPrice.multiply(BigDecimal.valueOf(existing.getQuantity())));
-                if (!itemsToSave.contains(existing)) {
-                    itemsToSave.add(existing);
+            for (OrderItemRequest req : request.getItems()) {
+                if (req.getQuantity() == null || req.getQuantity() <= 0) {
+                    throw new RuntimeException("Quantity must be greater than 0");
                 }
-            } else {
+
+                MenuItem menuItem = findMenuItemScoped(req.getMenuItemId(), restaurantId);
+
+                if (!Boolean.TRUE.equals(menuItem.getIsAvailable())) {
+                    throw new RuntimeException("Menu item is not available");
+                }
+
+                if (menuItem.getCategory() != null && Boolean.FALSE.equals(menuItem.getCategory().getIsActive())) {
+                    throw new RuntimeException("This category is inactive. Please refresh the menu and try again.");
+                }
+
+                BigDecimal unitPrice = menuItem.getPrice();
+                String notes = (req.getNotes() != null && !req.getNotes().isBlank()) ? req.getNotes().trim() : null;
+
                 Optional<OrderItem> newMatch = itemsToSave.stream()
                         .filter(oi -> oi.getMenuItem().getId().equals(menuItem.getId()) && notesMatch(oi.getNotes(), notes))
                         .findFirst();
@@ -542,7 +568,63 @@ public class OrderService {
                     newItem.setUnitPrice(unitPrice);
                     newItem.setNotes(notes);
                     newItem.setSubtotal(unitPrice.multiply(BigDecimal.valueOf(req.getQuantity())));
+                    newItem.setStatus("NEW");
+                    newItem.setBatchNumber(nextBatch);
                     itemsToSave.add(newItem);
+                }
+            }
+        } else {
+            for (OrderItemRequest req : request.getItems()) {
+                if (req.getQuantity() == null || req.getQuantity() <= 0) {
+                    throw new RuntimeException("Quantity must be greater than 0");
+                }
+
+                MenuItem menuItem = findMenuItemScoped(req.getMenuItemId(), restaurantId);
+
+                if (!Boolean.TRUE.equals(menuItem.getIsAvailable())) {
+                    throw new RuntimeException("Menu item is not available");
+                }
+
+                if (menuItem.getCategory() != null && Boolean.FALSE.equals(menuItem.getCategory().getIsActive())) {
+                    throw new RuntimeException("This category is inactive. Please refresh the menu and try again.");
+                }
+
+                BigDecimal unitPrice = menuItem.getPrice();
+                String notes = (req.getNotes() != null && !req.getNotes().isBlank()) ? req.getNotes().trim() : null;
+
+                Optional<OrderItem> existingMatch = existingItems.stream()
+                        .filter(oi -> oi.getMenuItem().getId().equals(menuItem.getId()) && notesMatch(oi.getNotes(), notes))
+                        .findFirst();
+
+                if (existingMatch.isPresent()) {
+                    OrderItem existing = existingMatch.get();
+                    existing.setQuantity(existing.getQuantity() + req.getQuantity());
+                    existing.setSubtotal(unitPrice.multiply(BigDecimal.valueOf(existing.getQuantity())));
+                    if (!itemsToSave.contains(existing)) {
+                        itemsToSave.add(existing);
+                    }
+                } else {
+                    Optional<OrderItem> newMatch = itemsToSave.stream()
+                            .filter(oi -> oi.getMenuItem().getId().equals(menuItem.getId()) && notesMatch(oi.getNotes(), notes))
+                            .findFirst();
+
+                    if (newMatch.isPresent()) {
+                        OrderItem newMatchingItem = newMatch.get();
+                        newMatchingItem.setQuantity(newMatchingItem.getQuantity() + req.getQuantity());
+                        newMatchingItem.setSubtotal(unitPrice.multiply(BigDecimal.valueOf(newMatchingItem.getQuantity())));
+                    } else {
+                        OrderItem newItem = new OrderItem();
+                        newItem.setRestaurant(order.getRestaurant());
+                        newItem.setOrder(order);
+                        newItem.setMenuItem(menuItem);
+                        newItem.setQuantity(req.getQuantity());
+                        newItem.setUnitPrice(unitPrice);
+                        newItem.setNotes(notes);
+                        newItem.setSubtotal(unitPrice.multiply(BigDecimal.valueOf(req.getQuantity())));
+                        newItem.setStatus("NEW");
+                        newItem.setBatchNumber(1);
+                        itemsToSave.add(newItem);
+                    }
                 }
             }
         }
@@ -556,9 +638,18 @@ public class OrderService {
 
         order.setSubtotal(subtotal);
         order.setTotalAmount(subtotal.add(order.getTaxAmount()).subtract(order.getDiscountAmount()));
+
+        if (kitchenEnabled && "READY".equalsIgnoreCase(order.getStatus())) {
+            order.setStatus("PREPARING");
+        }
+
         Order savedOrder = orderRepository.save(order);
 
-        eventPublisher.publishOrderUpdated(savedOrder);
+        if (kitchenEnabled) {
+            eventPublisher.publishOrderUpdated(savedOrder, nextBatch, true);
+        } else {
+            eventPublisher.publishOrderUpdated(savedOrder);
+        }
 
         return mapToResponse(savedOrder, allItems);
     }
@@ -574,6 +665,10 @@ public class OrderService {
         if (!"KITCHEN".equalsIgnoreCase(securityUtils.getCurrentUserRole())) {
             throw new AccessDeniedException("Access denied");
         }
+        Long restaurantId = securityUtils.getCurrentRestaurantId();
+        if (!isKitchenModeEnabled(restaurantId)) {
+            throw new KitchenWorkflowDisabledException("Kitchen workflow is disabled for this restaurant");
+        }
         return updateOrderStatus(id, "NEW", "ACCEPTED");
     }
 
@@ -582,6 +677,10 @@ public class OrderService {
         if (!"KITCHEN".equalsIgnoreCase(securityUtils.getCurrentUserRole())) {
             throw new AccessDeniedException("Access denied");
         }
+        Long restaurantId = securityUtils.getCurrentRestaurantId();
+        if (!isKitchenModeEnabled(restaurantId)) {
+            throw new KitchenWorkflowDisabledException("Kitchen workflow is disabled for this restaurant");
+        }
         return updateOrderStatus(id, "ACCEPTED", "PREPARING");
     }
 
@@ -589,6 +688,10 @@ public class OrderService {
     public OrderResponse readyOrder(Long id) {
         if (!"KITCHEN".equalsIgnoreCase(securityUtils.getCurrentUserRole())) {
             throw new AccessDeniedException("Access denied");
+        }
+        Long restaurantId = securityUtils.getCurrentRestaurantId();
+        if (!isKitchenModeEnabled(restaurantId)) {
+            throw new KitchenWorkflowDisabledException("Kitchen workflow is disabled for this restaurant");
         }
         return updateOrderStatus(id, "PREPARING", "READY");
     }
@@ -615,33 +718,77 @@ public class OrderService {
         }
 
         Order order = findOrderScoped(id, restaurantId);
+        if (order.getRestaurant() == null || !restaurantId.equals(order.getRestaurant().getId())) {
+            throw new AccessDeniedException("Access denied");
+        }
 
         String currentStatus = order.getStatus();
 
-        if ("ADMIN".equalsIgnoreCase(currentRole)) {
-            if (!"NEW".equalsIgnoreCase(currentStatus) && !"ACCEPTED".equalsIgnoreCase(currentStatus)) {
-                throw new RuntimeException("Invalid cancellation status");
-            }
-        } else if ("WAITER".equalsIgnoreCase(currentRole)) {
-            if (!"NEW".equalsIgnoreCase(currentStatus)) {
-                throw new RuntimeException("Invalid cancellation status");
-            }
-            if (order.getWaiter() == null || !order.getWaiter().getId().equals(currentUserId)) {
-                throw new AccessDeniedException("Access denied");
-            }
+        if ("CANCELLED".equalsIgnoreCase(currentStatus)) {
+            throw new OrderWorkflowConflictException("Order is already cancelled");
         }
 
-        if ("DINE_IN".equalsIgnoreCase(order.getOrderType()) && "NEW".equalsIgnoreCase(currentStatus)) {
-            if (order.getTable() != null) {
-                RestaurantTable table = order.getTable();
-                table.setStatus("AVAILABLE");
-                tableRepository.save(table);
+        if ("COMPLETED".equalsIgnoreCase(currentStatus)) {
+            throw new OrderWorkflowConflictException("Invalid cancellation status: Completed order cannot be cancelled");
+        }
+
+        boolean kitchenEnabled = isKitchenModeEnabled(restaurantId);
+
+        // Reject cancellation if a bill already exists for the order
+        boolean billExists = (billRepository != null) &&
+                (billRepository.existsByRestaurantIdAndOrderId(restaurantId, order.getId())
+                        || billRepository.existsByOrderId(order.getId()));
+        if (billExists) {
+            throw new OrderWorkflowConflictException("Cannot cancel order: bill has already been generated");
+        }
+
+        if ("ADMIN".equalsIgnoreCase(currentRole)) {
+            if (!"NEW".equalsIgnoreCase(currentStatus) && !"ACCEPTED".equalsIgnoreCase(currentStatus)) {
+                throw new OrderWorkflowConflictException("Invalid cancellation status");
             }
+        } else if ("WAITER".equalsIgnoreCase(currentRole)) {
+            if (order.getWaiter() == null || !order.getWaiter().getId().equals(currentUserId)) {
+                throw new AccessDeniedException("Access denied: You can only cancel your own orders");
+            }
+
+            if (kitchenEnabled) {
+                if (!"NEW".equalsIgnoreCase(currentStatus)) {
+                    throw new OrderWorkflowConflictException("Invalid cancellation status: Order cannot be cancelled after kitchen acceptance");
+                }
+                List<OrderItem> currentItems = findOrderItemsScoped(id, restaurantId);
+                boolean anyProgressed = currentItems.stream().anyMatch(i -> i.getStatus() != null && !"NEW".equalsIgnoreCase(i.getStatus()));
+                if (anyProgressed) {
+                    throw new OrderWorkflowConflictException("Invalid cancellation status: Order cannot be cancelled after kitchen acceptance");
+                }
+            } else {
+                List<String> activeStatuses = Arrays.asList("NEW", "ACCEPTED", "PREPARING", "READY");
+                if (!activeStatuses.contains(currentStatus != null ? currentStatus.toUpperCase() : "")) {
+                    throw new OrderWorkflowConflictException("Invalid cancellation status");
+                }
+            }
+        } else {
+            throw new AccessDeniedException("Access denied");
         }
 
         order.setStatus("CANCELLED");
         Order saved = orderRepository.save(order);
+        orderRepository.flush();
         saveStatusHistory(saved, "CANCELLED", currentUserId);
+
+        if ("DINE_IN".equalsIgnoreCase(order.getOrderType()) && order.getTable() != null) {
+            RestaurantTable table = order.getTable();
+            Long tableId = table.getId();
+            boolean hasOtherActiveOrders = orderRepository.existsByRestaurantIdAndTableIdAndOrderTypeAndStatusIn(
+                    restaurantId,
+                    tableId,
+                    "DINE_IN",
+                    Arrays.asList("NEW", "ACCEPTED", "PREPARING", "READY")
+            );
+            if (!hasOtherActiveOrders) {
+                table.setStatus("AVAILABLE");
+                tableRepository.save(table);
+            }
+        }
 
         eventPublisher.publishOrderStatusChanged(saved);
         notificationService.notifyOrderCancelled(saved);
@@ -725,6 +872,8 @@ public class OrderService {
                         .unitPrice(i.getUnitPrice())
                         .notes(i.getNotes())
                         .subtotal(i.getSubtotal())
+                        .status(i.getStatus())
+                        .batchNumber(i.getBatchNumber())
                         .build())
                 .collect(Collectors.toList());
 
@@ -763,6 +912,17 @@ public class OrderService {
             throw new RuntimeException("Order not found with id: " + id);
         }
         return order;
+    }
+
+    private Order findOrderForUpdateScoped(Long id, Long restaurantId) {
+        if (restaurantId == null) {
+            throw new AccessDeniedException("Restaurant context required");
+        }
+        Optional<Order> opt = orderRepository.findByIdAndRestaurantIdForUpdate(id, restaurantId);
+        if (opt.isPresent()) {
+            return opt.get();
+        }
+        return findOrderScoped(id, restaurantId);
     }
 
     private MenuItem findMenuItemScoped(Long id, Long restaurantId) {
@@ -841,6 +1001,15 @@ public class OrderService {
         return fallback.stream()
                 .filter(i -> i.getRestaurant() == null || restaurantId.equals(i.getRestaurant().getId()))
                 .collect(Collectors.toList());
+    }
+
+    private boolean isKitchenModeEnabled(Long restaurantId) {
+        if (restaurantId == null || settingsRepository == null) {
+            return true;
+        }
+        return settingsRepository.findByRestaurantId(restaurantId)
+                .map(s -> s.getKitchenEnabled() != null ? s.getKitchenEnabled() : true)
+                .orElse(true);
     }
 }
 

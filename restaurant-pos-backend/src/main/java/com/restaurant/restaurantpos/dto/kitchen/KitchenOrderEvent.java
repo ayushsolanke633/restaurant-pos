@@ -22,6 +22,8 @@ public class KitchenOrderEvent {
     private Long tableId;
     private Integer tableNumber;
     private String status;
+    private Integer batchNumber;
+    private Boolean isUpdate;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

@@ -40,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named = "MIGRATION_TEST_DB_PASSWORD", matches = ".+")
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:postgresql://localhost:5432/restaurant_pos_migration_test",
         "spring.datasource.username=restaurant_app",

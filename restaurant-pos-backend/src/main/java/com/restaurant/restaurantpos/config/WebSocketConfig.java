@@ -1,6 +1,8 @@
 package com.restaurant.restaurantpos.config;
 
 import com.restaurant.restaurantpos.security.StompAuthChannelInterceptor;
+import com.restaurant.restaurantpos.security.StompOutboundChannelInterceptor;
+import com.restaurant.restaurantpos.security.WebSocketSessionRevocationManager;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.ChannelRegistration;
@@ -8,6 +10,7 @@ import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
 
 import java.util.List;
 
@@ -17,17 +20,29 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final List<String> allowedOrigins;
     private final StompAuthChannelInterceptor stompAuthChannelInterceptor;
+    private final StompOutboundChannelInterceptor stompOutboundChannelInterceptor;
+    private final WebSocketSessionRevocationManager webSocketSessionRevocationManager;
 
     @org.springframework.beans.factory.annotation.Autowired
     public WebSocketConfig(
             StompAuthChannelInterceptor stompAuthChannelInterceptor,
+            StompOutboundChannelInterceptor stompOutboundChannelInterceptor,
+            WebSocketSessionRevocationManager webSocketSessionRevocationManager,
             @Value("${app.cors.allowed-origins}") List<String> allowedOrigins) {
         this.stompAuthChannelInterceptor = stompAuthChannelInterceptor;
+        this.stompOutboundChannelInterceptor = stompOutboundChannelInterceptor;
+        this.webSocketSessionRevocationManager = webSocketSessionRevocationManager;
         this.allowedOrigins = allowedOrigins != null ? allowedOrigins : List.of();
     }
 
+    public WebSocketConfig(
+            StompAuthChannelInterceptor stompAuthChannelInterceptor,
+            @Value("${app.cors.allowed-origins}") List<String> allowedOrigins) {
+        this(stompAuthChannelInterceptor, null, null, allowedOrigins);
+    }
+
     public WebSocketConfig(StompAuthChannelInterceptor stompAuthChannelInterceptor) {
-        this(stompAuthChannelInterceptor, List.of("http://localhost:5173", "http://localhost:5174"));
+        this(stompAuthChannelInterceptor, null, null, List.of("http://localhost:5173", "http://localhost:5174"));
     }
 
     @Override
@@ -62,6 +77,23 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
-        registration.interceptors(stompAuthChannelInterceptor);
+        if (stompAuthChannelInterceptor != null) {
+            registration.interceptors(stompAuthChannelInterceptor);
+        }
+    }
+
+    @Override
+    public void configureClientOutboundChannel(ChannelRegistration registration) {
+        if (stompOutboundChannelInterceptor != null) {
+            registration.interceptors(stompOutboundChannelInterceptor);
+        }
+    }
+
+    @Override
+    public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
+        if (webSocketSessionRevocationManager != null) {
+            registration.addDecoratorFactory(webSocketSessionRevocationManager.getDecoratorFactory());
+        }
     }
 }
+

@@ -42,6 +42,23 @@ export const authService = {
   },
 
   /**
+   * Logs out the user by notifying backend to revoke token and clearing local storage.
+   * Guaranteed to clear session locally even if backend call fails (e.g. HTTP 503) or network is down.
+   * NOTE: Clearing local credentials ensures this client device is signed out, but is not proof
+   * that a stolen or copied token was successfully revoked on the backend if the server failed
+   * to persist the revocation record.
+   */
+  async logout() {
+    try {
+      await api.post(API_ENDPOINTS.LOGOUT);
+    } catch {
+      // Safe failover: clear local session even if network or server is unreachable / returns 503
+    } finally {
+      this.clearSession();
+    }
+  },
+
+  /**
    * Clear session from sessionStorage and legacy localStorage
    */
   clearSession() {

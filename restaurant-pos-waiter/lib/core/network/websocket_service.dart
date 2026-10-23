@@ -82,7 +82,9 @@ class WebSocketService {
 
     final token = await _storageService.getToken();
     if (token == null || token.isEmpty) {
-      debugPrint('[WAITER WS DEBUG]\nTOKEN PRESENT=false');
+      if (kDebugMode) {
+        debugPrint('[WAITER WS] Token absent, skipping connection');
+      }
       _isConnecting = false;
       return;
     }
@@ -90,9 +92,9 @@ class WebSocketService {
     final claims = _decodeJwtClaims(token);
     final role = claims?['role'] ?? 'WAITER';
 
-    debugPrint('[WAITER WS DEBUG]\nTOKEN PRESENT=true');
-    debugPrint('[WAITER WS DEBUG]\nJWT ROLE=$role');
-    debugPrint('[WAITER WS DEBUG]\nRESTAURANT ID=$_subscribedRestaurantId');
+    if (kDebugMode) {
+      debugPrint('[WAITER WS] Connecting with role: $role, restaurant: $_subscribedRestaurantId');
+    }
 
     try {
       final baseUrl = await _urlResolver.resolveUrl();

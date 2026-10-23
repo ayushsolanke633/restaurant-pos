@@ -31,26 +31,64 @@ public class KitchenController {
     }
 
     @GetMapping("/orders/{id}")
-    public ResponseEntity<KitchenOrderResponse> getKitchenOrderById(@PathVariable Long id) {
-        KitchenOrderResponse response = kitchenService.getKitchenOrderById(id);
+    public ResponseEntity<KitchenOrderResponse> getKitchenOrderById(
+            @PathVariable Long id,
+            @RequestParam(required = false) Integer batch) {
+        KitchenOrderResponse response = kitchenService.getKitchenOrderById(id, batch);
         return ResponseEntity.ok(response);
     }
 
     @PatchMapping("/orders/{id}/accept")
-    public ResponseEntity<KitchenOrderResponse> acceptOrder(@PathVariable Long id) {
-        KitchenOrderResponse response = kitchenService.acceptOrder(id);
+    public ResponseEntity<KitchenOrderResponse> acceptOrder(
+            @PathVariable Long id,
+            @RequestParam(required = false) Integer batch) {
+        KitchenOrderResponse response = (batch != null) ?
+                kitchenService.acceptBatch(id, batch) :
+                kitchenService.acceptOrder(id);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/orders/{id}/batches/{batchNumber}/accept")
+    public ResponseEntity<KitchenOrderResponse> acceptBatch(
+            @PathVariable Long id,
+            @PathVariable Integer batchNumber) {
+        KitchenOrderResponse response = kitchenService.acceptBatch(id, batchNumber);
         return ResponseEntity.ok(response);
     }
 
     @PatchMapping("/orders/{id}/preparing")
-    public ResponseEntity<KitchenOrderResponse> prepareOrder(@PathVariable Long id) {
-        KitchenOrderResponse response = kitchenService.prepareOrder(id);
+    public ResponseEntity<KitchenOrderResponse> prepareOrder(
+            @PathVariable Long id,
+            @RequestParam(required = false) Integer batch) {
+        KitchenOrderResponse response = (batch != null) ?
+                kitchenService.prepareBatch(id, batch) :
+                kitchenService.prepareOrder(id);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/orders/{id}/batches/{batchNumber}/preparing")
+    public ResponseEntity<KitchenOrderResponse> prepareBatch(
+            @PathVariable Long id,
+            @PathVariable Integer batchNumber) {
+        KitchenOrderResponse response = kitchenService.prepareBatch(id, batchNumber);
         return ResponseEntity.ok(response);
     }
 
     @PatchMapping("/orders/{id}/ready")
-    public ResponseEntity<KitchenOrderResponse> readyOrder(@PathVariable Long id) {
-        KitchenOrderResponse response = kitchenService.readyOrder(id);
+    public ResponseEntity<KitchenOrderResponse> readyOrder(
+            @PathVariable Long id,
+            @RequestParam(required = false) Integer batch) {
+        KitchenOrderResponse response = (batch != null) ?
+                kitchenService.readyBatch(id, batch) :
+                kitchenService.readyOrder(id);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/orders/{id}/batches/{batchNumber}/ready")
+    public ResponseEntity<KitchenOrderResponse> readyBatch(
+            @PathVariable Long id,
+            @PathVariable Integer batchNumber) {
+        KitchenOrderResponse response = kitchenService.readyBatch(id, batchNumber);
         return ResponseEntity.ok(response);
     }
 }

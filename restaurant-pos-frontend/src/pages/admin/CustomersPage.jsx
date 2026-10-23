@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import useAutoDismiss from '../../hooks/useAutoDismiss';
 import customerService from '../../services/customerService';
 import CustomerModal from '../../components/admin/CustomerModal';
 import CustomerDetailsModal from '../../components/admin/CustomerDetailsModal';
@@ -8,6 +9,8 @@ export const CustomersPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  useAutoDismiss(successMsg, () => setSuccessMsg(''));
 
   // Search state
   const [searchTerm, setSearchTerm] = useState('');
@@ -245,7 +248,6 @@ export const CustomersPage = () => {
               : 'New customer created successfully.'
           );
           fetchCustomers(searchTerm);
-          setTimeout(() => setSuccessMsg(''), 4000);
         }}
       />
 

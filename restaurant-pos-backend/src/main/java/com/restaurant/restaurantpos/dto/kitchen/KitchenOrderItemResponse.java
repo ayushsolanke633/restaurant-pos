@@ -19,4 +19,6 @@ public class KitchenOrderItemResponse {
     private Integer quantity;
     private String notes;
     private String categoryName;
+    private String status;
+    private Integer batchNumber;
 }

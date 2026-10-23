@@ -10,7 +10,7 @@ void main() {
       ),
     );
 
-    expect(find.text('Restaurant POS'), findsWidgets);
+    expect(find.text('AnnaDhara'), findsWidgets);
     expect(find.text('Waiter Login'), findsOneWidget);
     expect(find.byType(TextFormField), findsNWidgets(2));
     expect(find.text('LOGIN'), findsOneWidget);

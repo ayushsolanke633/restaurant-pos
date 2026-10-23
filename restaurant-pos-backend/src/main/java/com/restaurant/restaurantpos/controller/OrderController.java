@@ -4,6 +4,7 @@ import com.restaurant.restaurantpos.dto.OrderRequest;
 import com.restaurant.restaurantpos.dto.OrderResponse;
 import com.restaurant.restaurantpos.service.OrderService;
 import jakarta.validation.Valid;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -96,6 +97,7 @@ public class OrderController {
     }
 
     @PatchMapping("/{id}/complete")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<OrderResponse> completeOrder(@PathVariable Long id) {
         OrderResponse response = orderService.completeOrder(id);
         return ResponseEntity.ok(response);

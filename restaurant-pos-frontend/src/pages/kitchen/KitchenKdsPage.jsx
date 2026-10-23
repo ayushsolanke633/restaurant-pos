@@ -9,7 +9,7 @@ import CombinedDishesPanel from '../../components/kitchen/CombinedDishesPanel';
 export const KitchenKdsPage = () => {
   const { user, role } = useAuth();
   const isAdmin = role === 'ADMIN';
-  const restaurantId = user?.restaurantId || 1; // Fallback tenant ID
+  const restaurantId = user?.restaurantId;
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -20,6 +20,7 @@ export const KitchenKdsPage = () => {
 
   // Restaurant Settings State
   const [autoAcceptOrders, setAutoAcceptOrders] = useState(false);
+  const [kitchenEnabled, setKitchenEnabled] = useState(true);
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [settingsError, setSettingsError] = useState(false);
   const [isSavingSetting, setIsSavingSetting] = useState(false);
@@ -34,14 +35,19 @@ export const KitchenKdsPage = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Fetch current restaurant settings for Auto Accept configuration
+  // Fetch current restaurant settings for Auto Accept configuration and Kitchen Mode
   const fetchSettings = useCallback(async () => {
     setSettingsLoading(true);
     setSettingsError(false);
     try {
       const data = await settingsService.getSettings();
-      if (data && typeof data.autoAcceptOrders === 'boolean') {
-        setAutoAcceptOrders(data.autoAcceptOrders);
+      if (data) {
+        if (typeof data.autoAcceptOrders === 'boolean') {
+          setAutoAcceptOrders(data.autoAcceptOrders);
+        }
+        if (typeof data.kitchenEnabled === 'boolean') {
+          setKitchenEnabled(data.kitchenEnabled);
+        }
       }
     } catch (err) {
       console.error('Failed to load restaurant settings in KDS:', err);
@@ -84,48 +90,12 @@ export const KitchenKdsPage = () => {
       return;
     }
 
-    // Instantly transition order status in local React state so UI card moves immediately
-    setOrders((prev) => {
-      const existingIdx = prev.findIndex((o) => o.orderId === event.orderId);
-      if (existingIdx >= 0) {
-        const updated = [...prev];
-        updated[existingIdx] = { ...updated[existingIdx], status: event.status };
-        return updated;
-      } else {
-        return [
-          ...prev,
-          {
-            orderId: event.orderId,
-            orderType: event.orderType || 'DINE_IN',
-            tableId: event.tableId,
-            tableNumber: event.tableNumber,
-            status: event.status,
-            createdAt: event.createdAt,
-            updatedAt: event.updatedAt,
-            items: [],
-          },
-        ];
-      }
-    });
-
+    // Fetch full active queue from backend to ensure all batches and columns stay synchronized
     try {
-      // Fetch full authoritative order details (including item details) from backend REST API
-      const fullOrder = await kitchenService.getKitchenOrderById(event.orderId);
-      if (fullOrder) {
-        console.log(`[KDS WS] refreshed order status=${fullOrder.status} orderId=${fullOrder.orderId}`);
-        setOrders((prev) => {
-          const existingIdx = prev.findIndex((o) => o.orderId === fullOrder.orderId);
-          if (existingIdx >= 0) {
-            const updated = [...prev];
-            updated[existingIdx] = fullOrder;
-            return updated;
-          } else {
-            return [...prev, fullOrder];
-          }
-        });
-      }
+      const activeOrders = await kitchenService.getKitchenOrders();
+      setOrders(activeOrders || []);
     } catch (_err) {
-      console.warn(`[KDS WS] Fetching full order details failed for orderId=${event.orderId}`);
+      console.warn(`[KDS WS] Refreshing active orders failed:`, _err);
     }
   }, []);
 
@@ -172,7 +142,17 @@ export const KitchenKdsPage = () => {
   const handleToggleAutoAccept = async () => {
     if (!isAdmin || isSavingSetting) return;
 
+    if (!kitchenEnabled) {
+      alert('Kitchen Display System (KDS) must be enabled before Auto-Accept Orders can be turned on.');
+      return;
+    }
+
     const newValue = !autoAcceptOrders;
+    if (newValue && !kitchenEnabled) {
+      alert('Kitchen Display System (KDS) must be enabled before Auto-Accept Orders can be turned on.');
+      return;
+    }
+
     setIsSavingSetting(true);
     try {
       const updated = await settingsService.updateSettings({ autoAcceptOrders: newValue });
@@ -183,28 +163,28 @@ export const KitchenKdsPage = () => {
       }
     } catch (err) {
       console.error('Failed to update auto accept setting:', err);
-      alert('Failed to update Auto Accept setting. Please try again.');
+      const backendMessage = err.response?.data?.message || err.message;
+      alert(backendMessage || 'Failed to update Auto Accept setting. Please try again.');
     } finally {
       setIsSavingSetting(false);
     }
   };
 
   // Handle kitchen order status transitions (NEW -> ACCEPTED -> PREPARING -> READY)
-  const handleStatusTransition = async (orderId, actionType) => {
+  const handleStatusTransition = async (orderId, actionType, batchNumber = null) => {
     try {
       let updatedOrder = null;
       if (actionType === 'accept') {
-        updatedOrder = await kitchenService.acceptOrder(orderId);
+        updatedOrder = await kitchenService.acceptOrder(orderId, batchNumber);
       } else if (actionType === 'prepare') {
-        updatedOrder = await kitchenService.prepareOrder(orderId);
+        updatedOrder = await kitchenService.prepareOrder(orderId, batchNumber);
       } else if (actionType === 'ready') {
-        updatedOrder = await kitchenService.readyOrder(orderId);
+        updatedOrder = await kitchenService.readyOrder(orderId, batchNumber);
       }
 
       if (updatedOrder) {
-        setOrders((prev) =>
-          prev.map((o) => (o.orderId === orderId ? updatedOrder : o))
-        );
+        const activeOrders = await kitchenService.getKitchenOrders();
+        setOrders(activeOrders || []);
       }
     } catch (err) {
       alert(err.response?.data?.message || err.message || `Failed to update order #${orderId}`);
@@ -245,7 +225,11 @@ export const KitchenKdsPage = () => {
             onClick={handleToggleAutoAccept}
             disabled={isSavingSetting}
             aria-label="Toggle Auto Accept Orders"
-            title={autoAcceptOrders ? "Auto Accept is ON (5 min delay)" : "Auto Accept is OFF (Manual acceptance)"}
+            title={
+              !kitchenEnabled
+                ? "Kitchen Display System (KDS) must be enabled before Auto-Accept Orders can be turned on"
+                : (autoAcceptOrders ? "Auto Accept is ON (5 min delay)" : "Auto Accept is OFF (Manual acceptance)")
+            }
           >
             <span className="toggle-pill">{autoAcceptOrders ? 'ON' : 'OFF'}</span>
             <span className="toggle-subtext">{autoAcceptOrders ? '5 min' : 'Manual'}</span>
@@ -293,6 +277,18 @@ export const KitchenKdsPage = () => {
 
       {error && <div className="alert alert-danger m-4">{error}</div>}
 
+      {!kitchenEnabled && (
+        <div className="alert alert-warning m-4" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '1.4rem' }}>⚠️</span>
+          <div>
+            <strong>Kitchen Display System is Inactive (Kitchen-Free Mode)</strong>
+            <p className="m-0 text-muted" style={{ fontSize: '0.9rem' }}>
+              This restaurant is configured for kitchen-free operation. Orders can be billed directly without kitchen status transitions. To enable the KDS queue, an administrator must enable Kitchen Mode under Settings.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Main KDS Columns Grid */}
       {loading ? (
         <div className="text-center py-5">
@@ -313,7 +309,7 @@ export const KitchenKdsPage = () => {
               ) : (
                 newOrders.map((order) => (
                   <KitchenOrderCard
-                    key={order.orderId}
+                    key={`${order.orderId}-${order.batchNumber || 1}`}
                     order={order}
                     onStatusTransition={handleStatusTransition}
                   />
@@ -334,7 +330,7 @@ export const KitchenKdsPage = () => {
               ) : (
                 acceptedOrders.map((order) => (
                   <KitchenOrderCard
-                    key={order.orderId}
+                    key={`${order.orderId}-${order.batchNumber || 1}`}
                     order={order}
                     onStatusTransition={handleStatusTransition}
                   />
@@ -355,7 +351,7 @@ export const KitchenKdsPage = () => {
               ) : (
                 preparingOrders.map((order) => (
                   <KitchenOrderCard
-                    key={order.orderId}
+                    key={`${order.orderId}-${order.batchNumber || 1}`}
                     order={order}
                     onStatusTransition={handleStatusTransition}
                   />
@@ -376,7 +372,7 @@ export const KitchenKdsPage = () => {
               ) : (
                 readyOrders.map((order) => (
                   <KitchenOrderCard
-                    key={order.orderId}
+                    key={`${order.orderId}-${order.batchNumber || 1}`}
                     order={order}
                     onStatusTransition={handleStatusTransition}
                   />
