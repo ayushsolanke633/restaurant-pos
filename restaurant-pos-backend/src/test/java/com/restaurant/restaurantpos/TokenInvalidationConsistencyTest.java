@@ -100,6 +100,12 @@ public class TokenInvalidationConsistencyTest {
     private StompOutboundChannelInterceptor stompOutboundChannelInterceptor;
 
     @Autowired
+    private com.restaurant.restaurantpos.security.RestaurantWebSocketSessionManager restaurantWebSocketSessionManager;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    @Autowired
     private CustomUserDetailsService userDetailsService;
 
     private Restaurant restaurantA;
@@ -362,6 +368,88 @@ public class TokenInvalidationConsistencyTest {
             assertEquals(3, jwtService.extractTokenVersion(newToken));
             assertTrue(jwtService.isTokenValid(newToken, userDetails));
         }
+
+        @Test
+        @DisplayName("A7. Role change increments token_version and invalidates previously issued token")
+        void testRoleChangeIncrementsTokenVersionAndInvalidatesOldToken() {
+            authenticateAsAdminA();
+            String oldToken = authService.login(new LoginRequest(waiterA.getEmail(), "Password123!")).getToken();
+            assertEquals(1, jwtService.extractTokenVersion(oldToken));
+
+            // Change role from WAITER to KITCHEN
+            UserRequest req = new UserRequest();
+            req.setRoleId(kitchenRole.getId());
+            userService.updateUser(waiterA.getId(), req);
+
+            User refreshed = userRepository.findById(waiterA.getId()).orElseThrow();
+            assertEquals("KITCHEN", refreshed.getRole().getName());
+            assertEquals(2, refreshed.getTokenVersion(), "Role change must increment token_version to 2");
+
+            var userDetails = userDetailsService.loadUserByUsername(waiterA.getEmail());
+            assertFalse(jwtService.isTokenValid(oldToken, userDetails),
+                    "Old token issued for WAITER role must be rejected after role changed to KITCHEN");
+        }
+
+        @Test
+        @DisplayName("A8. Role change back to original role increments version again and prevents old token reuse")
+        void testRoleChangeBackToOriginalRolePreventsOldTokenReuse() {
+            authenticateAsAdminA();
+            String initialWaiterToken = authService.login(new LoginRequest(waiterA.getEmail(), "Password123!")).getToken();
+            assertEquals(1, jwtService.extractTokenVersion(initialWaiterToken));
+
+            // 1. Change role WAITER -> KITCHEN (token_version 1 -> 2)
+            UserRequest toKitchen = new UserRequest();
+            toKitchen.setRoleId(kitchenRole.getId());
+            userService.updateUser(waiterA.getId(), toKitchen);
+
+            // 2. Change role KITCHEN -> WAITER (token_version 2 -> 3)
+            UserRequest backToWaiter = new UserRequest();
+            backToWaiter.setRoleId(waiterRole.getId());
+            userService.updateUser(waiterA.getId(), backToWaiter);
+
+            User refreshed = userRepository.findById(waiterA.getId()).orElseThrow();
+            assertEquals(3, refreshed.getTokenVersion(),
+                    "Changing role back must increment token_version again to 3");
+            assertEquals("WAITER", refreshed.getRole().getName());
+
+            var activeDetails = userDetailsService.loadUserByUsername(waiterA.getEmail());
+            assertFalse(jwtService.isTokenValid(initialWaiterToken, activeDetails),
+                    "Initial token (version 1) must remain strictly invalid even when user role is restored to WAITER");
+        }
+
+        @Test
+        @DisplayName("A9. Combined role, password, and status change increments token_version exactly once")
+        void testCombinedRolePasswordStatusChangeIncrementsVersionOnlyOnce() {
+            authenticateAsAdminA();
+            UserRequest combined = new UserRequest();
+            combined.setRoleId(kitchenRole.getId());
+            combined.setPassword("NewKitchenSecret123!");
+            combined.setIsActive(false);
+
+            userService.updateUser(waiterA.getId(), combined);
+
+            User refreshed = userRepository.findById(waiterA.getId()).orElseThrow();
+            assertEquals(2, refreshed.getTokenVersion(),
+                    "Combined role, password, and status change in single request must increment version by exactly 1 (1 -> 2)");
+            assertEquals("KITCHEN", refreshed.getRole().getName());
+            assertFalse(refreshed.getIsActive());
+        }
+
+        @Test
+        @DisplayName("A10. Unchanged role does NOT increment token_version")
+        void testUnchangedRoleDoesNotIncrementTokenVersion() {
+            authenticateAsAdminA();
+            UserRequest req = new UserRequest();
+            req.setRoleId(waiterRole.getId()); // Same as current role
+            req.setName("Updated Waiter Display Name");
+
+            userService.updateUser(waiterA.getId(), req);
+
+            User refreshed = userRepository.findById(waiterA.getId()).orElseThrow();
+            assertEquals(1, refreshed.getTokenVersion(),
+                    "token_version must NOT increment when role is unchanged");
+            assertEquals("Updated Waiter Display Name", refreshed.getName());
+        }
     }
 
     // =========================================================================
@@ -548,6 +636,92 @@ public class TokenInvalidationConsistencyTest {
             StompHeaderAccessor resultAccessor = StompHeaderAccessor.wrap(connectResult);
             assertNull(resultAccessor.getUser(),
                     "STOMP CONNECT with pre-deactivation token must NOT authenticate after reactivation");
+        }
+
+        @Test
+        @DisplayName("B7. WebSocket invalidation occurs only after successful transaction commit")
+        void testWebSocketInvalidationOccursAfterTransactionCommit() throws Exception {
+            String sessionId = "ws-commit-test-session";
+            WebSocketSession mockSession = mock(WebSocketSession.class);
+            when(mockSession.getId()).thenReturn(sessionId);
+            when(mockSession.isOpen()).thenReturn(true);
+
+            sessionRevocationManager.registerWebSocketSession(mockSession);
+            sessionRevocationManager.bindSessionToToken(sessionId, "jti-commit-test", adminA.getId(), restaurantA.getId());
+            restaurantWebSocketSessionManager.registerSession(sessionId, restaurantA.getId());
+
+            assertFalse(sessionRevocationManager.isSessionRevoked(sessionId));
+            assertFalse(restaurantWebSocketSessionManager.isRestaurantDeactivated(restaurantA.getId()));
+
+            new org.springframework.transaction.support.TransactionTemplate(transactionManager).execute(status -> {
+                platformOnboardingService.updateRestaurantStatus(restaurantA.getId(), false);
+                return null;
+            });
+
+            // Post-commit: WebSocket session must be revoked, closed, and restaurant deactivated
+            assertTrue(sessionRevocationManager.isSessionRevoked(sessionId),
+                    "WebSocket session must be marked revoked after transaction commit");
+            verify(mockSession, times(1)).close(any());
+            assertTrue(restaurantWebSocketSessionManager.isRestaurantDeactivated(restaurantA.getId()),
+                    "Restaurant must be marked deactivated in WebSocket session manager after commit");
+            assertEquals(2, tenantTokenVersionManager.getTenantVersion(restaurantA.getId()),
+                    "Tenant token version must be committed to 2");
+        }
+
+        @Test
+        @DisplayName("B8. WebSocket invalidation does NOT occur if transaction rolls back")
+        void testWebSocketInvalidationDoesNotOccurOnTransactionRollback() throws Exception {
+            String sessionId = "ws-rollback-test-session";
+            WebSocketSession mockSession = mock(WebSocketSession.class);
+            when(mockSession.getId()).thenReturn(sessionId);
+            when(mockSession.isOpen()).thenReturn(true);
+
+            sessionRevocationManager.registerWebSocketSession(mockSession);
+            sessionRevocationManager.bindSessionToToken(sessionId, "jti-rollback-test", adminA.getId(), restaurantA.getId());
+            restaurantWebSocketSessionManager.registerSession(sessionId, restaurantA.getId());
+
+            assertFalse(sessionRevocationManager.isSessionRevoked(sessionId));
+            assertFalse(restaurantWebSocketSessionManager.isRestaurantDeactivated(restaurantA.getId()));
+
+            assertThrows(RuntimeException.class, () -> {
+                new org.springframework.transaction.support.TransactionTemplate(transactionManager).execute(status -> {
+                    platformOnboardingService.updateRestaurantStatus(restaurantA.getId(), false);
+                    throw new RuntimeException("Simulated exception triggering transaction rollback");
+                });
+            });
+
+            // Post-rollback: session must NOT be revoked, NOT closed, and restaurant NOT deactivated
+            assertFalse(sessionRevocationManager.isSessionRevoked(sessionId),
+                    "WebSocket session must NOT be revoked when transaction rolls back");
+            verify(mockSession, never()).close(any());
+            assertFalse(restaurantWebSocketSessionManager.isRestaurantDeactivated(restaurantA.getId()),
+                    "Restaurant must NOT be marked deactivated when transaction rolls back");
+            assertEquals(1, tenantTokenVersionManager.getTenantVersion(restaurantA.getId()),
+                    "Tenant token version must remain 1 after transaction rollback");
+
+            Restaurant inDb = restaurantRepository.findById(restaurantA.getId()).orElseThrow();
+            assertTrue(inDb.getIsActive(), "Restaurant in database must remain active after rollback");
+        }
+
+        @Test
+        @DisplayName("B9. Concurrent restaurant status changes use locking and execute consistently")
+        void testConcurrentRestaurantStatusUpdatesSerializeCleanly() throws Exception {
+            var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+            try {
+                var future1 = executor.submit(() -> platformOnboardingService.updateRestaurantStatus(restaurantA.getId(), false));
+                var future2 = executor.submit(() -> platformOnboardingService.updateRestaurantStatus(restaurantA.getId(), true));
+
+                var res1 = future1.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                var res2 = future2.get(5, java.util.concurrent.TimeUnit.SECONDS);
+
+                assertNotNull(res1);
+                assertNotNull(res2);
+
+                Restaurant finalState = restaurantRepository.findById(restaurantA.getId()).orElseThrow();
+                assertNotNull(finalState.getIsActive(), "Final restaurant active status must be non-null and valid");
+            } finally {
+                executor.shutdown();
+            }
         }
     }
 }

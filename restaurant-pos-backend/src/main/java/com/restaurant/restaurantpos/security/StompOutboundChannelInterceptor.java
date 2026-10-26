@@ -51,17 +51,22 @@ public class StompOutboundChannelInterceptor implements ChannelInterceptor {
         if (StompCommand.MESSAGE.equals(accessor.getCommand())) {
             String sessionId = accessor.getSessionId();
             if (sessionId != null && sessionRevocationManager != null) {
-                // Check if session has been marked revoked or its token jti is revoked
-                if (sessionRevocationManager.isSessionRevoked(sessionId)) {
-                    log.warn("Suppressing message delivery to revoked WebSocket session: {}", sessionId);
-                    return null; // Suppress delivery
-                }
+                try {
+                    // Check if session has been marked revoked or its token jti is revoked
+                    if (sessionRevocationManager.isSessionRevoked(sessionId)) {
+                        log.warn("Suppressing message delivery to revoked WebSocket session: {}", sessionId);
+                        return null; // Suppress delivery
+                    }
 
-                String jti = sessionRevocationManager.getJtiForSession(sessionId);
-                if (jti != null && tokenRevocationService != null && tokenRevocationService.isRevoked(jti)) {
-                    log.warn("Suppressing message delivery: token jti for WebSocket session {} is revoked", sessionId);
-                    sessionRevocationManager.invalidateSessionsForJti(jti);
-                    return null; // Suppress delivery
+                    String jti = sessionRevocationManager.getJtiForSession(sessionId);
+                    if (jti != null && tokenRevocationService != null && tokenRevocationService.isRevoked(jti)) {
+                        log.warn("Suppressing message delivery: token jti for WebSocket session {} is revoked", sessionId);
+                        sessionRevocationManager.invalidateSessionsForJti(jti);
+                        return null; // Suppress delivery
+                    }
+                } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
+                    log.warn("Revocation storage failure during outbound message check for session {}: {}. Suppressing delivery fail-closed.", sessionId, ex.getMessage());
+                    return null; // Suppress delivery fail-closed without marking session permanently revoked
                 }
             }
         }

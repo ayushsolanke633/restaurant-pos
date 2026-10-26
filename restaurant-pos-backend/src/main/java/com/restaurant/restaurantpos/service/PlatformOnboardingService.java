@@ -21,6 +21,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -158,34 +160,67 @@ public class PlatformOnboardingService {
 
     @Transactional(rollbackFor = Exception.class)
     public PlatformRestaurantResponse updateRestaurantStatus(Long id, boolean isActive) {
-        Restaurant restaurant = restaurantRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Restaurant not found with id: " + id));
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("updateRestaurantStatus requires an active database transaction");
+        }
+
+        Restaurant restaurant = restaurantRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException("Restaurant not found with id: " + id));
 
         boolean statusChanged = !Boolean.valueOf(isActive).equals(restaurant.getIsActive());
+
+        if (statusChanged) {
+            if (!isActive) {
+                int currentVersion = restaurant.getTokenVersion() != null ? restaurant.getTokenVersion() : 1;
+                restaurant.setTokenVersion(currentVersion + 1);
+                log.info("Deactivating restaurant ID={}. Incrementing persistent token_version to {}. Scheduling post-commit invalidation.", id, restaurant.getTokenVersion());
+            } else {
+                log.info("Reactivating restaurant ID={}. Persistent token_version remains {}. Scheduling post-commit reactivation.", id, restaurant.getTokenVersion());
+            }
+        }
 
         restaurant.setIsActive(isActive);
         Restaurant saved = restaurantRepository.save(restaurant);
 
         if (statusChanged) {
+            final int committedVersion = saved.getTokenVersion();
             if (!isActive) {
-                log.info("Deactivating restaurant ID={}. Invalidating active WebSocket sessions and tokens.", id);
-                if (tenantTokenVersionManager != null) {
-                    tenantTokenVersionManager.onRestaurantDeactivated(id);
-                }
-                if (webSocketSessionManager != null) {
-                    webSocketSessionManager.deactivateRestaurant(id);
-                }
-                if (webSocketSessionRevocationManager != null) {
-                    webSocketSessionRevocationManager.invalidateSessionsForRestaurant(id);
-                }
+                Runnable wsDeactivation = () -> {
+                    log.info("Executing post-commit WebSocket invalidation for deactivated restaurant ID={}", id);
+                    if (tenantTokenVersionManager != null) {
+                        tenantTokenVersionManager.setTenantVersion(id, committedVersion);
+                    }
+                    if (webSocketSessionManager != null) {
+                        webSocketSessionManager.deactivateRestaurant(id);
+                    }
+                    if (webSocketSessionRevocationManager != null) {
+                        webSocketSessionRevocationManager.invalidateSessionsForRestaurant(id);
+                    }
+                };
+
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        wsDeactivation.run();
+                    }
+                });
             } else {
-                log.info("Reactivating restaurant ID={}.", id);
-                if (webSocketSessionManager != null) {
-                    webSocketSessionManager.reactivateRestaurant(id);
-                }
-                if (tenantTokenVersionManager != null) {
-                    tenantTokenVersionManager.onRestaurantReactivated(id);
-                }
+                Runnable wsReactivation = () -> {
+                    log.info("Executing post-commit reactivation for restaurant ID={}", id);
+                    if (webSocketSessionManager != null) {
+                        webSocketSessionManager.reactivateRestaurant(id);
+                    }
+                    if (tenantTokenVersionManager != null) {
+                        tenantTokenVersionManager.setTenantVersion(id, committedVersion);
+                    }
+                };
+
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        wsReactivation.run();
+                    }
+                });
             }
         }
 

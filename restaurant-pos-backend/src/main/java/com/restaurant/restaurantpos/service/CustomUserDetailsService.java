@@ -45,6 +45,9 @@ public class CustomUserDetailsService implements UserDetailsService {
         SimpleGrantedAuthority authority = new SimpleGrantedAuthority("ROLE_" + roleName);
 
         Long restaurantId = user.getRestaurant() != null ? user.getRestaurant().getId() : null;
+        Integer restaurantTokenVersion = (user.getRestaurant() != null && user.getRestaurant().getTokenVersion() != null)
+                ? user.getRestaurant().getTokenVersion()
+                : 1;
 
         return new CustomUserDetails(
                 user.getId(),
@@ -54,7 +57,8 @@ public class CustomUserDetailsService implements UserDetailsService {
                 user.getPasswordHash(),
                 user.getIsActive(),
                 Collections.singletonList(authority),
-                user.getTokenVersion() != null ? user.getTokenVersion() : 1
+                user.getTokenVersion() != null ? user.getTokenVersion() : 1,
+                restaurantTokenVersion
         );
     }
 }

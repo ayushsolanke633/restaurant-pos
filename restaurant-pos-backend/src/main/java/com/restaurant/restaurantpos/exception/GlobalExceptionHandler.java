@@ -21,6 +21,22 @@ public class GlobalExceptionHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    @ExceptionHandler(jakarta.persistence.EntityNotFoundException.class)
+    public ResponseEntity<Map<String, String>> handleEntityNotFoundException(jakarta.persistence.EntityNotFoundException ex) {
+        Map<String, String> error = new HashMap<>();
+        error.put("message", ex.getMessage() != null ? ex.getMessage() : "Resource not found");
+        return new ResponseEntity<>(error, HttpStatus.NOT_FOUND);
+    }
+
+    @ExceptionHandler(org.springframework.dao.DataAccessException.class)
+    public ResponseEntity<Map<String, String>> handleDataAccessException(org.springframework.dao.DataAccessException ex) {
+        logger.error("Database infrastructure failure: {}", ex.getMessage());
+        Map<String, String> error = new HashMap<>();
+        error.put("error", "Service Unavailable");
+        error.put("message", "Database service temporarily unavailable");
+        return new ResponseEntity<>(error, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
     @ExceptionHandler(RevocationStorageException.class)
     public ResponseEntity<Map<String, String>> handleRevocationStorageException(RevocationStorageException ex) {
         logger.error("Token revocation persistence failure: {}", ex.getMessage());

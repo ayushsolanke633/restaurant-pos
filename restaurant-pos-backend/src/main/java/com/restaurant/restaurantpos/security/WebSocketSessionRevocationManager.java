@@ -321,11 +321,16 @@ public class WebSocketSessionRevocationManager {
             }
             String jti = metadata.getJti();
             if (jti != null && tokenRevocationService != null) {
-                boolean revokedInDb = tokenRevocationService.isRevoked(jti);
-                if (revokedInDb) {
-                    metadata.setRevoked(true);
-                    explicitlyRevokedSessions.add(sessionId);
-                    return true;
+                try {
+                    boolean revokedInDb = tokenRevocationService.isRevoked(jti);
+                    if (revokedInDb) {
+                        metadata.setRevoked(true);
+                        explicitlyRevokedSessions.add(sessionId);
+                        return true;
+                    }
+                } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
+                    log.warn("Revocation store unavailable while checking session {}: {}. Propagating failure without marking session revoked.", sessionId, ex.getMessage());
+                    throw ex;
                 }
             }
         }

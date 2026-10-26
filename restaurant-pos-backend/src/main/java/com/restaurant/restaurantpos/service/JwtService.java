@@ -62,9 +62,9 @@ public class JwtService {
         claims.put("role", user.getRole() != null ? user.getRole().getName() : null);
         claims.put("tokenVersion", tokenVersion);
         if (restaurantId != null) {
-            int tenantVersion = tenantTokenVersionManager != null
-                    ? tenantTokenVersionManager.getTenantVersion(restaurantId)
-                    : 1;
+            int tenantVersion = (user.getRestaurant() != null && user.getRestaurant().getTokenVersion() != null)
+                    ? user.getRestaurant().getTokenVersion()
+                    : (tenantTokenVersionManager != null ? tenantTokenVersionManager.getTenantVersion(restaurantId) : 1);
             claims.put("tenantVersion", tenantVersion);
         }
         return createToken(claims, user.getEmail(), jti);
@@ -93,23 +93,11 @@ public class JwtService {
     }
 
     public Integer extractTokenVersion(String token) {
-        return extractClaim(token, claims -> {
-            Object ver = claims.get("tokenVersion");
-            if (ver instanceof Number num) {
-                return num.intValue();
-            }
-            return null;
-        });
+        return extractClaim(token, claims -> parseStrictPositiveInteger(claims.get("tokenVersion")));
     }
 
     public Integer extractTenantVersion(String token) {
-        return extractClaim(token, claims -> {
-            Object ver = claims.get("tenantVersion");
-            if (ver instanceof Number num) {
-                return num.intValue();
-            }
-            return null;
-        });
+        return extractClaim(token, claims -> parseStrictPositiveInteger(claims.get("tenantVersion")));
     }
 
     public Date extractExpiration(String token) {
@@ -138,71 +126,179 @@ public class JwtService {
         try {
             Claims claims = extractAllClaims(token);
 
-            // 1. Validate jti claim presence (fail-closed after cutover)
+            // 1. Validate jti claim presence and format (strictly valid UUID string)
             String jti = claims.getId();
             if (jti == null || jti.trim().isEmpty()) {
                 return false;
             }
-
-            // 2. Validate tokenVersion claim presence (fail-closed after cutover)
-            Object tokenVerObj = claims.get("tokenVersion");
-            if (!(tokenVerObj instanceof Number tokenVerNum)) {
+            try {
+                UUID.fromString(jti.trim());
+            } catch (IllegalArgumentException ex) {
                 return false;
             }
-            int tokenVersion = tokenVerNum.intValue();
 
-            if (userDetails instanceof CustomUserDetails cud) {
-                // 3. Validate tokenVersion against persisted user state
-                if (cud.getTokenVersion() == null || !cud.getTokenVersion().equals(tokenVersion)) {
+            // 2. Validate tokenVersion claim presence (strictly positive integer without lossy truncation)
+            Integer tokenVersion = parseStrictPositiveInteger(claims.get("tokenVersion"));
+            if (tokenVersion == null) {
+                return false;
+            }
+
+            if (!(userDetails instanceof CustomUserDetails cud)) {
+                return false;
+            }
+
+            // 3. Validate tokenVersion against persisted user state
+            if (cud.getTokenVersion() == null || !cud.getTokenVersion().equals(tokenVersion)) {
+                return false;
+            }
+
+            // 4. Validate tenantVersion for tenant users against persistent restaurant state (never default missing to 1)
+            if (cud.getRestaurantId() != null) {
+                Integer tokenTenantVersion = parseStrictPositiveInteger(claims.get("tenantVersion"));
+                if (tokenTenantVersion == null) {
+                    return false; // Fail closed on missing, malformed, decimal, or negative tenantVersion
+                }
+                int currentTenantVersion = cud.getRestaurantTokenVersion() != null
+                        ? cud.getRestaurantTokenVersion()
+                        : (tenantTokenVersionManager != null ? tenantTokenVersionManager.getTenantVersion(cud.getRestaurantId()) : 1);
+                if (!tokenTenantVersion.equals(currentTenantVersion)) {
                     return false;
                 }
+            }
 
-                // 4. Validate tenantVersion for tenant users (tokens issued before restaurant deactivation cannot be reused)
-                if (cud.getRestaurantId() != null) {
-                    Object tenantVerObj = claims.get("tenantVersion");
-                    int tokenTenantVersion = (tenantVerObj instanceof Number num) ? num.intValue() : 1;
-                    int currentTenantVersion = tenantTokenVersionManager != null
-                            ? tenantTokenVersionManager.getTenantVersion(cud.getRestaurantId())
-                            : 1;
-                    if (tokenTenantVersion != currentTenantVersion) {
-                        return false;
-                    }
+            // 5. Validate userId claim strictly (non-null, positive integral value matching user identity)
+            Long tokenUserId = parseStrictPositiveLong(claims.get("userId"));
+            if (tokenUserId == null || cud.getUserId() == null || !tokenUserId.equals(cud.getUserId())) {
+                return false;
+            }
+
+            // 6. Validate role claim
+            String tokenRole = claims.get("role", String.class);
+            if (tokenRole == null || cud.getRoleName() == null || !tokenRole.equalsIgnoreCase(cud.getRoleName())) {
+                return false;
+            }
+
+            // 7. Validate restaurant binding & SUPER_ADMIN policy
+            Object rawRestId = claims.get("restaurantId");
+            if ("SUPER_ADMIN".equalsIgnoreCase(cud.getRoleName())) {
+                // SUPER_ADMIN must NOT have tenantVersion or restaurantId claim
+                if (claims.get("tenantVersion") != null || rawRestId != null || cud.getRestaurantId() != null) {
+                    return false;
                 }
-
-                Object tokenUserIdObj = claims.get("userId");
-                if (tokenUserIdObj instanceof Number num && cud.getUserId() != null) {
-                    if (num.longValue() != cud.getUserId().longValue()) {
-                        return false;
-                    }
-                }
-
-                String tokenRole = claims.get("role", String.class);
-                if (tokenRole != null && cud.getRoleName() != null) {
-                    if (!tokenRole.equalsIgnoreCase(cud.getRoleName())) {
-                        return false;
-                    }
-                }
-
-                Object tokenRestIdObj = claims.get("restaurantId");
-                if ("SUPER_ADMIN".equalsIgnoreCase(cud.getRoleName())) {
-                    if (tokenRestIdObj != null || cud.getRestaurantId() != null) {
-                        return false;
-                    }
-                } else {
-                    if (tokenRestIdObj instanceof Number num && cud.getRestaurantId() != null) {
-                        if (num.longValue() != cud.getRestaurantId().longValue()) {
-                            return false;
-                        }
-                    } else if (cud.getRestaurantId() == null) {
-                        return false;
-                    }
+            } else {
+                // Tenant user must have matching non-null restaurantId (strictly positive integral)
+                Long tokenRestId = parseStrictPositiveLong(rawRestId);
+                if (tokenRestId == null || cud.getRestaurantId() == null || !tokenRestId.equals(cud.getRestaurantId())) {
+                    return false;
                 }
             }
+        } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException ex) {
+            throw ex; // Propagate database/infrastructure failures
         } catch (Exception ex) {
             return false;
         }
 
         return true;
+    }
+
+    public Long extractUserId(String token) {
+        return extractClaim(token, claims -> parseStrictPositiveLong(claims.get("userId")));
+    }
+
+    public Long extractRestaurantId(String token) {
+        return extractClaim(token, claims -> parseStrictPositiveLong(claims.get("restaurantId")));
+    }
+
+    private Integer parseStrictPositiveInteger(Object claimObj) {
+        if (claimObj == null) {
+            return null;
+        }
+        if (claimObj instanceof Integer i) {
+            return i > 0 ? i : null;
+        }
+        if (claimObj instanceof Long l) {
+            return (l > 0 && l <= Integer.MAX_VALUE) ? l.intValue() : null;
+        }
+        if (claimObj instanceof Short s) {
+            return s > 0 ? s.intValue() : null;
+        }
+        if (claimObj instanceof Byte b) {
+            return b > 0 ? b.intValue() : null;
+        }
+        if (claimObj instanceof java.math.BigDecimal bd) {
+            try {
+                int i = bd.intValueExact();
+                return i > 0 ? i : null;
+            } catch (ArithmeticException e) {
+                return null;
+            }
+        }
+        if (claimObj instanceof java.math.BigInteger bi) {
+            try {
+                int i = bi.intValueExact();
+                return i > 0 ? i : null;
+            } catch (ArithmeticException e) {
+                return null;
+            }
+        }
+        if (claimObj instanceof Number num) {
+            double d = num.doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d) || Math.floor(d) != d) {
+                return null; // Reject fractional / decimal numbers
+            }
+            long l = num.longValue();
+            if (l < 1 || l > Integer.MAX_VALUE || (double) l != d) {
+                return null; // Reject negative, zero, overflow, or precision loss
+            }
+            return (int) l;
+        }
+        return null;
+    }
+
+    private Long parseStrictPositiveLong(Object claimObj) {
+        if (claimObj == null) {
+            return null;
+        }
+        if (claimObj instanceof Long l) {
+            return l > 0 ? l : null;
+        }
+        if (claimObj instanceof Integer i) {
+            return i > 0 ? (long) i : null;
+        }
+        if (claimObj instanceof Short s) {
+            return s > 0 ? (long) s : null;
+        }
+        if (claimObj instanceof Byte b) {
+            return b > 0 ? (long) b : null;
+        }
+        if (claimObj instanceof java.math.BigDecimal bd) {
+            try {
+                long l = bd.longValueExact();
+                return l > 0 ? l : null;
+            } catch (ArithmeticException e) {
+                return null;
+            }
+        }
+        if (claimObj instanceof java.math.BigInteger bi) {
+            try {
+                long l = bi.longValueExact();
+                return l > 0 ? l : null;
+            } catch (ArithmeticException e) {
+                return null;
+            }
+        }
+        if (claimObj instanceof Number num) {
+            double d = num.doubleValue();
+            if (Double.isNaN(d) || Double.isInfinite(d) || Math.floor(d) != d) {
+                return null; // Reject fractional / decimal numbers
+            }
+            long l = num.longValue();
+            if (l < 1L || (double) l != d) {
+                return null; // Reject negative, zero, or precision loss
+            }
+            return l;
+        }
+        return null;
     }
 
     public boolean isTokenExpired(String token) {

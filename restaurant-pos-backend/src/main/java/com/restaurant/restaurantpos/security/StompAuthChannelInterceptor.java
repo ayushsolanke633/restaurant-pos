@@ -150,8 +150,10 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                             return MessageBuilder.createMessage(message.getPayload(), mutableAccessor.getMessageHeaders());
                         }
                     }
+                } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
+                    throw new org.springframework.messaging.MessageDeliveryException("Service temporarily unavailable");
                 } catch (Exception ex) {
-                    // Invalid token or deactivated restaurant
+                    // Invalid token or deactivated restaurant - do not authenticate
                 }
             }
         } else if (StompCommand.SUBSCRIBE.equals(accessor.getCommand())) {
@@ -222,24 +224,36 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
     private void assertSessionNotRevoked(StompHeaderAccessor accessor) {
         String sessionId = accessor.getSessionId();
         if (sessionId != null && webSocketSessionRevocationManager != null) {
-            if (webSocketSessionRevocationManager.isSessionRevoked(sessionId)) {
-                throw new AccessDeniedException("Access denied: Token or WebSocket session has been revoked");
-            }
-            String sessionJti = webSocketSessionRevocationManager.getJtiForSession(sessionId);
-            if (sessionJti != null && tokenRevocationService != null && tokenRevocationService.isRevoked(sessionJti)) {
-                webSocketSessionRevocationManager.invalidateSessionsForJti(sessionJti);
-                throw new AccessDeniedException("Access denied: Token has been revoked");
+            try {
+                if (webSocketSessionRevocationManager.isSessionRevoked(sessionId)) {
+                    throw new AccessDeniedException("Access denied: Token or WebSocket session has been revoked");
+                }
+                String sessionJti = webSocketSessionRevocationManager.getJtiForSession(sessionId);
+                if (sessionJti != null && tokenRevocationService != null) {
+                    if (tokenRevocationService.isRevoked(sessionJti)) {
+                        webSocketSessionRevocationManager.invalidateSessionsForJti(sessionJti);
+                        throw new AccessDeniedException("Access denied: Token has been revoked");
+                    }
+                }
+            } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
+                throw new org.springframework.messaging.MessageDeliveryException("Service temporarily unavailable");
             }
         }
 
         Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
         if (sessionAttributes != null) {
             String attrJti = (String) sessionAttributes.get(SESSION_ATTR_JTI);
-            if (attrJti != null && tokenRevocationService != null && tokenRevocationService.isRevoked(attrJti)) {
-                if (webSocketSessionRevocationManager != null) {
-                    webSocketSessionRevocationManager.invalidateSessionsForJti(attrJti);
+            if (attrJti != null && tokenRevocationService != null) {
+                try {
+                    if (tokenRevocationService.isRevoked(attrJti)) {
+                        if (webSocketSessionRevocationManager != null) {
+                            webSocketSessionRevocationManager.invalidateSessionsForJti(attrJti);
+                        }
+                        throw new AccessDeniedException("Access denied: Token has been revoked");
+                    }
+                } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
+                    throw new org.springframework.messaging.MessageDeliveryException("Service temporarily unavailable");
                 }
-                throw new AccessDeniedException("Access denied: Token has been revoked");
             }
         }
     }

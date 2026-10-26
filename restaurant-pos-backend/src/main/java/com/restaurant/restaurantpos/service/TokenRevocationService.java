@@ -69,14 +69,8 @@ public class TokenRevocationService {
             }
 
             expiration = jwtService.extractExpiration(token);
-            userId = jwtService.extractClaim(token, claims -> {
-                Object uid = claims.get("userId");
-                return uid instanceof Number num ? num.longValue() : null;
-            });
-            restaurantId = jwtService.extractClaim(token, claims -> {
-                Object rid = claims.get("restaurantId");
-                return rid instanceof Number num ? num.longValue() : null;
-            });
+            userId = jwtService.extractUserId(token);
+            restaurantId = jwtService.extractRestaurantId(token);
 
             if (userId == null) {
                 log.warn("Cannot revoke token jti={}: missing userId claim.", jti);
@@ -135,10 +129,15 @@ public class TokenRevocationService {
             return true; // Fail closed on missing/blank jti
         }
         try {
+            java.util.UUID.fromString(jti.trim());
+        } catch (IllegalArgumentException e) {
+            return true; // Malformed / non-UUID jti is rejected fail-closed without DB round-trip
+        }
+        try {
             return revokedTokenRepository.existsByJti(jti);
-        } catch (Exception ex) {
-            log.error("Database error while checking token revocation for jti={}: {}. Failing closed.", jti, ex.getMessage());
-            return true; // Fail closed on database error
+        } catch (DataAccessException ex) {
+            log.error("Database error while checking token revocation for jti={}: {}", jti, ex.getMessage());
+            throw ex; // Propagate database/infrastructure failure
         }
     }
 

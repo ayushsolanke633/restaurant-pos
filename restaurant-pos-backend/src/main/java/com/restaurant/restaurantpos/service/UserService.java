@@ -58,8 +58,7 @@ public class UserService {
 
         // Acquire transactional write lock on the restaurant row to safely serialize staff creation per restaurant against concurrent requests
         Restaurant restaurant = restaurantRepository.findByIdForUpdate(targetRestaurantId)
-                .or(() -> restaurantRepository.findById(targetRestaurantId))
-                .orElseThrow(() -> new RuntimeException("Restaurant not found with id: " + targetRestaurantId));
+                .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException("Restaurant not found with id: " + targetRestaurantId));
 
         if (request.getRoleId() == null) {
             throw new RuntimeException("Role ID is required");
@@ -148,7 +147,8 @@ public class UserService {
             }
         }
 
-        if (request.getRoleId() != null && !request.getRoleId().equals(user.getRole().getId())) {
+        boolean roleChanged = false;
+        if (request.getRoleId() != null && (user.getRole() == null || !request.getRoleId().equals(user.getRole().getId()))) {
             Role newRole = roleRepository.findById(request.getRoleId())
                     .orElseThrow(() -> new RuntimeException("Role not found with id: " + request.getRoleId()));
             String newRoleName = newRole.getName();
@@ -161,14 +161,14 @@ public class UserService {
             if ("KITCHEN".equalsIgnoreCase(newRoleName)) {
                 Long restaurantId = user.getRestaurant().getId();
                 restaurantRepository.findByIdForUpdate(restaurantId)
-                        .or(() -> restaurantRepository.findById(restaurantId))
-                        .orElseThrow(() -> new RuntimeException("Restaurant not found with id: " + restaurantId));
+                        .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException("Restaurant not found with id: " + restaurantId));
                 Long existingKitchenCount = userRepository.countByRestaurantIdAndRoleNameIgnoreCase(restaurantId, "KITCHEN");
                 if (existingKitchenCount != null && existingKitchenCount > 0) {
                     throw new RuntimeException("Only one kitchen staff account is allowed per restaurant. A kitchen account already exists for this restaurant.");
                 }
             }
             user.setRole(newRole);
+            roleChanged = true;
         }
 
         if (request.getName() != null) {
@@ -197,7 +197,7 @@ public class UserService {
             passwordChanged = true;
         }
 
-        if (statusChanged || passwordChanged) {
+        if (statusChanged || passwordChanged || roleChanged) {
             int currentVersion = user.getTokenVersion() != null ? user.getTokenVersion() : 1;
             user.setTokenVersion(currentVersion + 1);
         }

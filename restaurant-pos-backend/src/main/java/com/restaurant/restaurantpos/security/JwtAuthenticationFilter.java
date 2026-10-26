@@ -91,8 +91,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             response.setContentType("application/json");
             response.getWriter().write("{\"message\":\"" + ex.getMessage() + "\"}");
             return;
+        } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
+            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            response.setContentType("application/json");
+            response.getWriter().write("{\"error\":\"Service Unavailable\",\"message\":\"Authentication service temporarily unavailable\"}");
+            return;
         } catch (Exception ex) {
-            // Token invalid or expired - do not authenticate, allow request to proceed
+            // Token invalid or expired - do not authenticate, allow request to proceed to SecurityEntryPoint (401)
         }
 
         filterChain.doFilter(request, response);
