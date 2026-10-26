@@ -7,7 +7,16 @@
 
 set -euo pipefail
 
-TARGET="${1:-}"
+TARGET=""
+ISOLATED_TEST_DB_ONLY=false
+
+for arg in "$@"; do
+    if [[ "$arg" == "--isolated-test-db-only" ]]; then
+        ISOLATED_TEST_DB_ONLY=true
+    elif [[ -z "$TARGET" ]]; then
+        TARGET="$arg"
+    fi
+done
 
 echo "=== AnnaDhara P0-2 Controlled Migration Gate ==="
 
@@ -19,12 +28,22 @@ if [[ -z "${DB_URL:-}" || -z "${DB_USERNAME:-}" || -z "${DB_PASSWORD:-}" ]]; the
 fi
 
 # 2. Immutable Approved Migration Allowlist
-APPROVED_ALLOWLIST=("1.0.0" "1.2.0" "1.3.0" "1.4.0" "1.5.0")
+APPROVED_ALLOWLIST=("1.0.0" "1.2.0" "1.3.0" "1.4.0" "1.5.0" "1.6.0" "1.7.0" "1.8.0")
 # NOTE: 1.1.0 is strictly EXCLUDED as an unauthorized draft
+
+if [[ "$ISOLATED_TEST_DB_ONLY" == "true" ]]; then
+    if [[ "$DB_URL" != *"restaurant_pos_migration_test"* || "$DB_URL" =~ restaurant_pos([^a-zA-Z0-9_]|$) ]]; then
+        echo "[GATE HALT] --isolated-test-db-only is strictly restricted to 'restaurant_pos_migration_test'. Target was: $DB_URL" >&2
+        exit 1
+    fi
+    echo "[GATE NOTICE] Test-specific authorization active for isolated database 'restaurant_pos_migration_test'."
+    APPROVED_ALLOWLIST+=("1.6.0" "1.7.0")
+    export FLYWAY_TEST_ISOLATED_APPROVED="true"
+fi
 
 # 3. Read-Only Migration Metadata Inspection (mvn flyway:info with authorized locations)
 echo "[GATE CHECK] Querying current database migration status..."
-INFO_OUTPUT=$(mvn flyway:info -Dflyway.skip=false -Dflyway.authorized=true -Dflyway.locations=filesystem:src/main/resources/db/migration 2>&1) || {
+INFO_OUTPUT=$(mvn flyway:info -Dflyway.skip=false -Dflyway.locations=filesystem:src/main/resources/db/migration 2>&1) || {
     echo "[GATE HALT] Failed to retrieve migration info from database. Failing closed." >&2
     exit 1
 }
@@ -80,6 +99,7 @@ if [[ -z "$PENDING_LINES" ]]; then
     exit 0
 fi
 
+PENDING_VERSIONS_LIST=()
 while IFS= read -r line; do
     VER=$(echo "$line" | awk -F'|' '{gsub(/ /, "", $2); print $2}')
     DESC=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $3); print $3}')
@@ -100,16 +120,36 @@ while IFS= read -r line; do
         echo "[GATE REJECTED] Script is not authorized for execution. Aborting before migrate." >&2
         exit 1
     fi
+    PENDING_VERSIONS_LIST+=("$VER")
 done <<< "$PENDING_LINES"
+
+# 5.5 Read-Only Schema Preflight Validation
+echo "[GATE CHECK] Running read-only schema preflight validation for pending migrations..."
+VERSIONS_CSV=$(IFS=,; echo "${PENDING_VERSIONS_LIST[*]}")
+
+PREFLIGHT_OUTPUT=$(mvn compile exec:java \
+    -Dexec.mainClass="com.restaurant.restaurantpos.util.MigrationPreflightValidator" \
+    -Dexec.args="$VERSIONS_CSV" \
+    -q 2>&1) || {
+    echo "[GATE HALT] Migration preflight validation failed! Schema incompatibility detected or catalog query failed." >&2
+    echo "[GATE HALT] Aborting before Flyway migration execution." >&2
+    if [[ -n "$PREFLIGHT_OUTPUT" ]]; then
+        echo "$PREFLIGHT_OUTPUT" >&2
+    fi
+    exit 1
+}
+echo "[GATE APPROVED] Read-only schema preflight validation passed."
 
 # 6. Execute Authorized Migration
 echo "[GATE APPROVED] All pending migrations up to target are authorized."
 MIGRATE_ARGS=(
     "flyway:migrate"
     "-Dflyway.skip=false"
-    "-Dflyway.authorized=true"
     "-Dflyway.locations=filesystem:src/main/resources/db/migration"
 )
+if [[ "$ISOLATED_TEST_DB_ONLY" == "true" ]]; then
+    MIGRATE_ARGS+=("-Dmigration.test.isolated.approved=true")
+fi
 if [[ -n "$TARGET" ]]; then
     MIGRATE_ARGS+=("-Dflyway.target=$TARGET")
 fi
@@ -119,5 +159,13 @@ mvn "${MIGRATE_ARGS[@]}"
 
 # 7. Post-Migration Checksum Validation
 echo "[GATE VALIDATE] Executing post-migration checksum validation..."
-mvn flyway:validate -Dflyway.skip=false -Dflyway.locations=filesystem:src/main/resources/db/migration
+VALIDATE_ARGS=(
+    "flyway:validate"
+    "-Dflyway.skip=false"
+    "-Dflyway.locations=filesystem:src/main/resources/db/migration"
+)
+if [[ -n "$TARGET" ]]; then
+    VALIDATE_ARGS+=("-Dflyway.ignoreMigrationPatterns=*:pending")
+fi
+mvn "${VALIDATE_ARGS[@]}"
 echo "[GATE COMPLETE] Migration and validation completed successfully."

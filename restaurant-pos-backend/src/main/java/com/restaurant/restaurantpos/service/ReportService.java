@@ -111,6 +111,8 @@ public class ReportService {
                 .collect(Collectors.toList());
 
         BigDecimal totalTax = calculateSum(paidOrders, o -> o.getTaxAmount());
+        BigDecimal totalCgst = calculateSum(paidOrders, o -> o.getCgstAmount());
+        BigDecimal totalSgst = calculateSum(paidOrders, o -> o.getSgstAmount());
         BigDecimal totalDiscount = calculateSum(paidOrders, o -> o.getDiscountAmount());
 
         long paidCount = paidOrders.size();
@@ -131,6 +133,8 @@ public class ReportService {
                 .pendingOrders(pendingOrders)
                 .totalRevenue(totalRevenue)
                 .totalTax(totalTax)
+                .totalCgst(totalCgst)
+                .totalSgst(totalSgst)
                 .totalDiscount(totalDiscount)
                 .averageOrderValue(averageOrderValue)
                 .cashAmount(cashAmount)
@@ -170,6 +174,8 @@ public class ReportService {
                 .collect(Collectors.toList());
 
         BigDecimal totalTax = calculateSum(paidOrders, o -> o.getTaxAmount());
+        BigDecimal totalCgst = calculateSum(paidOrders, o -> o.getCgstAmount());
+        BigDecimal totalSgst = calculateSum(paidOrders, o -> o.getSgstAmount());
         BigDecimal totalDiscount = calculateSum(paidOrders, o -> o.getDiscountAmount());
 
         long paidCount = paidOrders.size();
@@ -183,6 +189,8 @@ public class ReportService {
                 .cancelledOrders(cancelledOrders)
                 .totalRevenue(totalRevenue)
                 .totalTax(totalTax)
+                .totalCgst(totalCgst)
+                .totalSgst(totalSgst)
                 .totalDiscount(totalDiscount)
                 .averageOrderValue(averageOrderValue)
                 .cashAmount(cashAmount)
@@ -536,6 +544,11 @@ public class ReportService {
                 .discount(discount)
                 .taxAmount(tax)
                 .tax(tax)
+                .gstMode(bill.getGstMode())
+                .cgstRate(bill.getCgstRate())
+                .sgstRate(bill.getSgstRate())
+                .cgstAmount(bill.getCgstAmount())
+                .sgstAmount(bill.getSgstAmount())
                 .totalAmount(total)
                 .total(total)
                 .items(itemResponses)

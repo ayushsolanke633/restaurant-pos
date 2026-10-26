@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -105,11 +106,8 @@ public class WebSocketSessionRevocationManager {
     private final TokenRevocationService tokenRevocationService;
 
     public WebSocketSessionRevocationManager(@Lazy TokenRevocationService tokenRevocationService) {
-        this.tokenRevocationService = tokenRevocationService;
-    }
-
-    public WebSocketSessionRevocationManager() {
-        this(null);
+        this.tokenRevocationService = java.util.Objects.requireNonNull(
+                tokenRevocationService, "tokenRevocationService must not be null");
     }
 
     /**
@@ -184,7 +182,8 @@ public class WebSocketSessionRevocationManager {
                         wsSession.close(TOKEN_REVOKED_CLOSE_STATUS);
                         log.info("Terminated WebSocket transport for revoked session {} (jti={})", sessionId, jti);
                     } catch (IOException ex) {
-                        log.warn("Exception closing WebSocket transport for session {}: {}", sessionId, ex.getMessage());
+                        log.warn("Exception closing WebSocket transport: operation=closeWebSocketTransport, sessionId={}, errorClass={}",
+                                sessionId, ex.getClass().getSimpleName());
                     }
                 }
 
@@ -232,7 +231,8 @@ public class WebSocketSessionRevocationManager {
                         wsSession.close(new CloseStatus(4401, "Restaurant deactivated"));
                         log.info("Terminated WebSocket transport for restaurant {} session {}", restaurantId, sessionId);
                     } catch (IOException ex) {
-                        log.warn("Exception closing WebSocket transport for session {}: {}", sessionId, ex.getMessage());
+                        log.warn("Exception closing WebSocket transport: operation=closeWebSocketTransport, sessionId={}, errorClass={}",
+                                sessionId, ex.getClass().getSimpleName());
                     }
                 }
 
@@ -321,6 +321,16 @@ public class WebSocketSessionRevocationManager {
             }
             String jti = metadata.getJti();
             if (jti != null && tokenRevocationService != null) {
+                // Fail-closed: validate jti UUID before querying store
+                try {
+                    UUID.fromString(jti.trim());
+                } catch (IllegalArgumentException ex) {
+                    log.warn("Malformed jti in session metadata: sessionId={}, jti={}. Marking revoked.", sessionId, jti);
+                    metadata.setRevoked(true);
+                    explicitlyRevokedSessions.add(sessionId);
+                    return true;
+                }
+
                 try {
                     boolean revokedInDb = tokenRevocationService.isRevoked(jti);
                     if (revokedInDb) {
@@ -329,13 +339,29 @@ public class WebSocketSessionRevocationManager {
                         return true;
                     }
                 } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
-                    log.warn("Revocation store unavailable while checking session {}: {}. Propagating failure without marking session revoked.", sessionId, ex.getMessage());
+                    log.warn("Revocation store unavailable while checking session: operation=checkSessionRevocation, sessionId={}, errorClass={}. Propagating failure without marking session revoked.",
+                            sessionId, ex.getClass().getSimpleName());
                     throw ex;
                 }
             }
         }
 
         return false;
+    }
+
+    /**
+     * Inspects whether a session has been explicitly marked revoked in memory
+     * without triggering database or remote store queries.
+     */
+    public boolean isSessionExplicitlyRevoked(String sessionId) {
+        if (sessionId == null) {
+            return false;
+        }
+        if (explicitlyRevokedSessions.contains(sessionId)) {
+            return true;
+        }
+        SessionMetadata metadata = activeSessions.get(sessionId);
+        return metadata != null && metadata.isRevoked();
     }
 
     public String getJtiForSession(String sessionId) {

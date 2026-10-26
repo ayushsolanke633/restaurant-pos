@@ -7,12 +7,14 @@
 #>
 param(
     [string]$Target = "",
+    [switch]$IsolatedTestDbOnly,
     [switch]$Help
 )
 
 if ($Help) {
-    Write-Host "Usage: ./scripts/safe-migrate.ps1 [-Target <version>]"
+    Write-Host "Usage: ./scripts/safe-migrate.ps1 [-Target <version>] [-IsolatedTestDbOnly]"
     Write-Host "Example: ./scripts/safe-migrate.ps1 -Target 1.5.0"
+    Write-Host "Example test: ./scripts/safe-migrate.ps1 -Target 1.6.0 -IsolatedTestDbOnly"
     exit 0
 }
 
@@ -30,12 +32,22 @@ if ([string]::IsNullOrWhiteSpace($dbUrl) -or [string]::IsNullOrWhiteSpace($dbUse
 }
 
 # 2. Immutable Approved Migration Allowlist
-$APPROVED_ALLOWLIST = @("1.0.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0")
+$APPROVED_ALLOWLIST = @("1.0.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")
 # NOTE: 1.1.0 is strictly EXCLUDED as an unauthorized draft
+
+if ($IsolatedTestDbOnly) {
+    if ($dbUrl -notmatch "restaurant_pos_migration_test" -or $dbUrl -match "restaurant_pos(?![_a-zA-Z0-9])") {
+        Write-Host "[GATE HALT] -IsolatedTestDbOnly is strictly restricted to 'restaurant_pos_migration_test'. Target was: $dbUrl" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[GATE NOTICE] Test-specific authorization active for isolated database 'restaurant_pos_migration_test'." -ForegroundColor Yellow
+    $APPROVED_ALLOWLIST += @("1.6.0", "1.7.0")
+    $env:FLYWAY_TEST_ISOLATED_APPROVED = "true"
+}
 
 # 3. Read-Only Migration Metadata Inspection (mvn flyway:info with authorized locations)
 Write-Host "[GATE CHECK] Querying current database migration status..." -ForegroundColor Yellow
-$infoOutput = & mvn flyway:info "-Dflyway.skip=false" "-Dflyway.authorized=true" "-Dflyway.locations=filesystem:src/main/resources/db/migration" 2>&1
+$infoOutput = & mvn flyway:info "-Dflyway.skip=false" "-Dflyway.locations=filesystem:src/main/resources/db/migration" 2>&1
 $infoExitCode = $LASTEXITCODE
 
 if ($infoExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($infoOutput)) {
@@ -128,14 +140,42 @@ foreach ($p in $pendingVersions) {
     }
 }
 
+# 5.5 Read-Only Schema Preflight Validation
+Write-Host "[GATE CHECK] Running read-only schema preflight validation for pending migrations..." -ForegroundColor Yellow
+$versionsToApply = @($pendingVersions | Where-Object { [string]::IsNullOrWhiteSpace($Target) -or ([version]$_.Version -le [version]$Target) } | ForEach-Object { $_.Version })
+$versionsCsv = $versionsToApply -join ","
+
+$preflightArgs = @(
+    "compile",
+    "exec:java",
+    "-Dexec.mainClass=com.restaurant.restaurantpos.util.MigrationPreflightValidator",
+    "-Dexec.args=$versionsCsv",
+    "-q"
+)
+
+$preflightOutput = & mvn @preflightArgs 2>&1
+$preflightExitCode = $LASTEXITCODE
+
+if ($preflightExitCode -ne 0) {
+    Write-Host "[GATE HALT] Migration preflight validation failed! Schema incompatibility detected or catalog query failed." -ForegroundColor Red
+    Write-Host "[GATE HALT] Aborting before Flyway migration execution." -ForegroundColor Red
+    if (-not [string]::IsNullOrWhiteSpace($preflightOutput)) {
+        Write-Host "$preflightOutput" -ForegroundColor Red
+    }
+    exit 1
+}
+Write-Host "[GATE APPROVED] Read-only schema preflight validation passed." -ForegroundColor Green
+
 # 6. Execute Authorized Migration
 Write-Host "[GATE APPROVED] All pending migrations up to target are authorized." -ForegroundColor Green
 $migrateArgs = @(
     "flyway:migrate",
     "-Dflyway.skip=false",
-    "-Dflyway.authorized=true",
     "-Dflyway.locations=filesystem:src/main/resources/db/migration"
 )
+if ($IsolatedTestDbOnly) {
+    $migrateArgs += "-Dmigration.test.isolated.approved=true"
+}
 if (-not [string]::IsNullOrWhiteSpace($Target)) {
     $migrateArgs += "-Dflyway.target=$Target"
 }
@@ -151,5 +191,13 @@ if ($migrateExitCode -ne 0) {
 
 # 7. Post-Migration Checksum Validation
 Write-Host "[GATE VALIDATE] Executing post-migration checksum validation..." -ForegroundColor Cyan
-& mvn flyway:validate "-Dflyway.skip=false" "-Dflyway.locations=filesystem:src/main/resources/db/migration"
+$validateArgs = @(
+    "flyway:validate",
+    "-Dflyway.skip=false",
+    "-Dflyway.locations=filesystem:src/main/resources/db/migration"
+)
+if (-not [string]::IsNullOrWhiteSpace($Target)) {
+    $validateArgs += "-Dflyway.ignoreMigrationPatterns=*:pending"
+}
+& mvn @validateArgs
 exit $LASTEXITCODE

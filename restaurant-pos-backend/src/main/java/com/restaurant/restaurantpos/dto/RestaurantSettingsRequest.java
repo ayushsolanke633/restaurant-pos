@@ -23,6 +23,8 @@ public class RestaurantSettingsRequest {
     @DecimalMax(value = "100.00", message = "Tax rate cannot exceed 100")
     private BigDecimal defaultTaxRate;
 
+    private String gstMode;
+
     private Boolean serviceChargeEnabled;
 
     @DecimalMin(value = "0.00", message = "Service charge rate must be at least 0")

@@ -247,13 +247,23 @@ public class PlatformOnboardingTest {
             Restaurant resto = new Restaurant();
             resto.setId(2L);
             resto.setIsActive(true);
+            when(restaurantRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(resto));
             when(restaurantRepository.findById(2L)).thenReturn(Optional.of(resto));
             when(restaurantRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            PlatformRestaurantResponse response = onboardingService.updateRestaurantStatus(2L, false);
-
-            assertFalse(response.getIsActive());
-            verify(webSocketSessionManager).deactivateRestaurant(2L);
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+            try {
+                PlatformRestaurantResponse response = onboardingService.updateRestaurantStatus(2L, false);
+                for (org.springframework.transaction.support.TransactionSynchronization sync : org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                    sync.afterCommit();
+                }
+                assertFalse(response.getIsActive());
+                verify(webSocketSessionManager).deactivateRestaurant(2L);
+            } finally {
+                org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+                org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+            }
         }
 
         @Test
@@ -262,13 +272,23 @@ public class PlatformOnboardingTest {
             Restaurant resto = new Restaurant();
             resto.setId(2L);
             resto.setIsActive(false);
+            when(restaurantRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(resto));
             when(restaurantRepository.findById(2L)).thenReturn(Optional.of(resto));
             when(restaurantRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            PlatformRestaurantResponse response = onboardingService.updateRestaurantStatus(2L, true);
-
-            assertTrue(response.getIsActive());
-            verify(webSocketSessionManager).reactivateRestaurant(2L);
+            org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(true);
+            org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+            try {
+                PlatformRestaurantResponse response = onboardingService.updateRestaurantStatus(2L, true);
+                for (org.springframework.transaction.support.TransactionSynchronization sync : org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()) {
+                    sync.afterCommit();
+                }
+                assertTrue(response.getIsActive());
+                verify(webSocketSessionManager).reactivateRestaurant(2L);
+            } finally {
+                org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+                org.springframework.transaction.support.TransactionSynchronizationManager.setActualTransactionActive(false);
+            }
         }
     }
 
@@ -434,7 +454,10 @@ public class PlatformOnboardingTest {
             userDetailsService = new CustomUserDetailsService(userRepository);
             authService = new AuthService(authenticationManager, userRepository, jwtService);
             webSocketSessionManager = new RestaurantWebSocketSessionManager();
-            stompInterceptor = new StompAuthChannelInterceptor(jwtService, userDetailsService, null, webSocketSessionManager);
+            com.restaurant.restaurantpos.service.TokenRevocationService mockRevocation = mock(com.restaurant.restaurantpos.service.TokenRevocationService.class);
+            com.restaurant.restaurantpos.security.WebSocketSessionRevocationManager sessionRevocationManager = new com.restaurant.restaurantpos.security.WebSocketSessionRevocationManager(mockRevocation);
+            stompInterceptor = new StompAuthChannelInterceptor(
+                    jwtService, userDetailsService, null, webSocketSessionManager, mockRevocation, sessionRevocationManager);
             jwtFilter = new JwtAuthenticationFilter(jwtService, userDetailsService);
             org.springframework.security.core.context.SecurityContextHolder.clearContext();
         }
@@ -505,6 +528,7 @@ public class PlatformOnboardingTest {
             webSocketSessionManager.deactivateRestaurant(2L);
 
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+            accessor.setSessionId("test-session-deact");
             accessor.setDestination("/topic/restaurants/2/kitchen/orders");
             CustomUserDetails cud = new CustomUserDetails(22L, 2L, "KITCHEN", "kitchen@deactivated.com", "hash", true, List.of());
             Authentication auth = new UsernamePasswordAuthenticationToken(cud, null, cud.getAuthorities());
@@ -526,6 +550,7 @@ public class PlatformOnboardingTest {
             assertFalse(webSocketSessionManager.isRestaurantDeactivated(2L));
 
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+            accessor.setSessionId("test-session-react");
             accessor.setDestination("/topic/restaurants/2/kitchen/orders");
             CustomUserDetails cud = new CustomUserDetails(22L, 2L, "ADMIN", "admin@deactivated.com", "hash", true, List.of());
             Authentication auth = new UsernamePasswordAuthenticationToken(cud, null, cud.getAuthorities());
@@ -592,6 +617,7 @@ public class PlatformOnboardingTest {
         @DisplayName("Tenant admin cannot create a user with SUPER_ADMIN role")
         void testTenantAdminCannotCreateSuperAdmin() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
+            when(restaurantRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(restaurantA));
             when(restaurantRepository.findById(1L)).thenReturn(Optional.of(restaurantA));
             when(roleRepository.findById(4L)).thenReturn(Optional.of(superAdminRole));
 

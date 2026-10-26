@@ -77,7 +77,7 @@ public class TokenRevocationService {
                 return;
             }
         } catch (Exception ex) {
-            log.warn("Cannot revoke malformed or unparseable token: {}", ex.getMessage());
+            log.warn("Cannot revoke malformed or unparseable token: operation=parseTokenClaims, errorClass={}", ex.getClass().getSimpleName());
             return;
         }
 
@@ -100,7 +100,7 @@ public class TokenRevocationService {
             try {
                 exists = persistenceHelper.existsByJti(jti);
             } catch (Exception checkEx) {
-                log.error("Failed to verify existence of revocation record for jti={}: {}", jti, checkEx.getMessage());
+                log.error("Failed to verify existence of revocation record: operation=verifyRevocationRace, jti={}, errorClass={}", jti, checkEx.getClass().getSimpleName());
             }
 
             if (exists) {
@@ -108,13 +108,13 @@ public class TokenRevocationService {
                 return;
             }
 
-            log.error("DataIntegrityViolationException for jti={}, but record does not exist in store!", jti, ex);
+            log.error("DataIntegrityViolationException: operation=persistRevocation, jti={}, record not found in store, errorClass={}", jti, ex.getClass().getSimpleName());
             throw new RevocationStorageException("Failed to persist token revocation record", ex);
         } catch (DataAccessException ex) {
-            log.error("Database error while persisting token revocation for jti={}: {}", jti, ex.getMessage());
+            log.error("Database error while persisting token revocation: operation=persistRevocation, jti={}, errorClass={}", jti, ex.getClass().getSimpleName());
             throw new RevocationStorageException("Revocation store unavailable", ex);
         } catch (Exception ex) {
-            log.error("Unexpected error while persisting token revocation for jti={}: {}", jti, ex.getMessage());
+            log.error("Unexpected error while persisting token revocation: operation=persistRevocation, jti={}, errorClass={}", jti, ex.getClass().getSimpleName());
             throw new RevocationStorageException("Unexpected error during revocation persistence", ex);
         }
     }
@@ -136,7 +136,7 @@ public class TokenRevocationService {
         try {
             return revokedTokenRepository.existsByJti(jti);
         } catch (DataAccessException ex) {
-            log.error("Database error while checking token revocation for jti={}: {}", jti, ex.getMessage());
+            log.error("Database error while checking token revocation: operation=checkRevocation, jti={}, errorClass={}", jti, ex.getClass().getSimpleName());
             throw ex; // Propagate database/infrastructure failure
         }
     }
@@ -149,7 +149,7 @@ public class TokenRevocationService {
         try {
             return revokedTokenRepository.deleteByExpiresAtBefore(Instant.now());
         } catch (Exception ex) {
-            log.error("Failed to purge expired revocation records: {}", ex.getMessage());
+            log.error("Failed to purge expired revocation records: operation=purgeExpiredRevocations, errorClass={}", ex.getClass().getSimpleName());
             return 0;
         }
     }

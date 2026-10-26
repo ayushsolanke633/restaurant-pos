@@ -125,6 +125,11 @@ public class BillService {
         bill.setBillNumber(billNumber);
         bill.setSubtotal(order.getSubtotal());
         bill.setTaxAmount(order.getTaxAmount());
+        bill.setGstMode(order.getGstMode());
+        bill.setCgstRate(order.getCgstRate());
+        bill.setSgstRate(order.getSgstRate());
+        bill.setCgstAmount(order.getCgstAmount() != null ? order.getCgstAmount() : BigDecimal.ZERO.setScale(2));
+        bill.setSgstAmount(order.getSgstAmount() != null ? order.getSgstAmount() : BigDecimal.ZERO.setScale(2));
         bill.setDiscountAmount(order.getDiscountAmount());
         bill.setTotalAmount(order.getTotalAmount());
         bill.setGeneratedBy(generatedBy);
@@ -302,6 +307,11 @@ public class BillService {
                 .billNumber(bill.getBillNumber())
                 .subtotal(bill.getSubtotal())
                 .taxAmount(bill.getTaxAmount())
+                .gstMode(bill.getGstMode())
+                .cgstRate(bill.getCgstRate())
+                .sgstRate(bill.getSgstRate())
+                .cgstAmount(bill.getCgstAmount())
+                .sgstAmount(bill.getSgstAmount())
                 .discountAmount(bill.getDiscountAmount())
                 .totalAmount(bill.getTotalAmount())
                 .generatedById(bill.getGeneratedBy() != null ? bill.getGeneratedBy().getId() : null)

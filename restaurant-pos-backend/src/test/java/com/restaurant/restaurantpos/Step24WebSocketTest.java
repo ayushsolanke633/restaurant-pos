@@ -42,6 +42,12 @@ public class Step24WebSocketTest {
     @Mock
     private SimpMessagingTemplate messagingTemplate;
 
+    @Mock
+    private com.restaurant.restaurantpos.service.TokenRevocationService tokenRevocationService;
+
+    @Mock
+    private com.restaurant.restaurantpos.security.WebSocketSessionRevocationManager webSocketSessionRevocationManager;
+
     @InjectMocks
     private StompAuthChannelInterceptor stompInterceptor;
 
@@ -66,8 +72,11 @@ public class Step24WebSocketTest {
     void testStompConnectSuccess() {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.CONNECT);
         accessor.addNativeHeader("Authorization", "Bearer valid_jwt");
+        accessor.setSessionId("session-1");
         Message<byte[]> message = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
 
+        when(jwtService.extractJti("valid_jwt")).thenReturn("valid-jti-uuid");
+        when(tokenRevocationService.isRevoked("valid-jti-uuid")).thenReturn(false);
         when(jwtService.extractUsername("valid_jwt")).thenReturn("kitchen1@restaurant.com");
         when(userDetailsService.loadUserByUsername("kitchen1@restaurant.com")).thenReturn(kitchenUserR1);
         when(jwtService.isTokenValid("valid_jwt", kitchenUserR1)).thenReturn(true);
@@ -85,8 +94,11 @@ public class Step24WebSocketTest {
     void testStompConnectInvalidJwt() {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.CONNECT);
         accessor.addNativeHeader("Authorization", "Bearer invalid_jwt");
+        accessor.setSessionId("session-2");
         Message<byte[]> message = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
 
+        when(jwtService.extractJti("invalid_jwt")).thenReturn("invalid-jti-uuid");
+        when(tokenRevocationService.isRevoked("invalid-jti-uuid")).thenReturn(false);
         when(jwtService.extractUsername("invalid_jwt")).thenThrow(new RuntimeException("Invalid token"));
 
         Message<?> result = stompInterceptor.preSend(message, messageChannel);
@@ -98,6 +110,7 @@ public class Step24WebSocketTest {
     @Test
     void testKitchenSubscribeOwnRestaurantSuccess() {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessor.setSessionId("session-kitchen-1");
         accessor.setDestination("/topic/restaurants/1/kitchen/orders");
         UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(kitchenUserR1, null, kitchenUserR1.getAuthorities());
         accessor.setUser(auth);
@@ -112,6 +125,7 @@ public class Step24WebSocketTest {
     @Test
     void testAdminSubscribeOwnRestaurantSuccess() {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessor.setSessionId("session-admin-1");
         accessor.setDestination("/topic/restaurants/1/kitchen/orders");
         UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(adminUserR1, null, adminUserR1.getAuthorities());
         accessor.setUser(auth);
@@ -126,6 +140,7 @@ public class Step24WebSocketTest {
     @Test
     void testWaiterSubscribeKitchenTopicRejected() {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessor.setSessionId("session-waiter-1");
         accessor.setDestination("/topic/restaurants/1/kitchen/orders");
         UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(waiterUserR1, null, waiterUserR1.getAuthorities());
         accessor.setUser(auth);
@@ -139,6 +154,7 @@ public class Step24WebSocketTest {
     @Test
     void testCrossTenantSubscriptionRejected() {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessor.setSessionId("session-kitchen-2");
         accessor.setDestination("/topic/restaurants/1/kitchen/orders");
         UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(kitchenUserR2, null, kitchenUserR2.getAuthorities());
         accessor.setUser(auth);
@@ -152,6 +168,7 @@ public class Step24WebSocketTest {
     @Test
     void testUnauthenticatedSubscriptionRejected() {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessor.setSessionId("session-anon-1");
         accessor.setDestination("/topic/restaurants/1/kitchen/orders");
 
         Message<byte[]> message = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());

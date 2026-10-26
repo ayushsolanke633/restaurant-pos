@@ -15,7 +15,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/kitchen")
-@PreAuthorize("hasRole('KITCHEN')")
+@PreAuthorize("hasAnyRole('KITCHEN', 'ADMIN')")
 public class KitchenController {
 
     private final KitchenService kitchenService;

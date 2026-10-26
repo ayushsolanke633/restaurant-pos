@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.ZoneId;
+import java.util.Locale;
 import java.util.Optional;
 
 @Service
@@ -56,12 +57,32 @@ public class RestaurantSettingsService {
             settings.setTaxEnabled(request.getTaxEnabled());
         }
 
+        if (request.getGstMode() != null) {
+            String rawMode = request.getGstMode().trim();
+            String mode = rawMode.toUpperCase(Locale.ROOT);
+            if (!"GST_EXCLUDED".equals(mode) && !"GST_INCLUDED".equals(mode)) {
+                throw new RuntimeException("Invalid GST mode: must be GST_EXCLUDED or GST_INCLUDED");
+            }
+            settings.setGstMode(mode);
+        }
+
         if (request.getDefaultTaxRate() != null) {
             BigDecimal taxRate = request.getDefaultTaxRate();
             if (taxRate.compareTo(BigDecimal.ZERO) < 0 || taxRate.compareTo(new BigDecimal("100.00")) > 0) {
                 throw new RuntimeException("Tax rate must be between 0 and 100");
             }
-            settings.setDefaultTaxRate(taxRate.setScale(2, RoundingMode.HALF_UP));
+            BigDecimal normalizedRate = taxRate.setScale(2, RoundingMode.HALF_UP);
+            BigDecimal cgstRate = normalizedRate.divide(BigDecimal.valueOf(2.0), 2, RoundingMode.HALF_UP);
+            BigDecimal sgstRate = normalizedRate.subtract(cgstRate).setScale(2, RoundingMode.HALF_UP);
+            settings.setDefaultTaxRate(normalizedRate);
+            settings.setCgstRate(cgstRate);
+            settings.setSgstRate(sgstRate);
+        } else if (settings.getDefaultTaxRate() != null && (settings.getCgstRate() == null || settings.getSgstRate() == null)) {
+            BigDecimal normalizedRate = settings.getDefaultTaxRate().setScale(2, RoundingMode.HALF_UP);
+            BigDecimal cgstRate = normalizedRate.divide(BigDecimal.valueOf(2.0), 2, RoundingMode.HALF_UP);
+            BigDecimal sgstRate = normalizedRate.subtract(cgstRate).setScale(2, RoundingMode.HALF_UP);
+            settings.setCgstRate(cgstRate);
+            settings.setSgstRate(sgstRate);
         }
 
         if (request.getServiceChargeEnabled() != null) {
@@ -153,6 +174,9 @@ public class RestaurantSettingsService {
         defaults.setRestaurant(restaurant);
         defaults.setTaxEnabled(true);
         defaults.setDefaultTaxRate(BigDecimal.ZERO.setScale(2));
+        defaults.setGstMode("GST_EXCLUDED");
+        defaults.setCgstRate(BigDecimal.ZERO.setScale(2));
+        defaults.setSgstRate(BigDecimal.ZERO.setScale(2));
         defaults.setServiceChargeEnabled(false);
         defaults.setDefaultServiceChargeRate(BigDecimal.ZERO.setScale(2));
         defaults.setCurrency("INR");
@@ -167,11 +191,34 @@ public class RestaurantSettingsService {
     }
 
     private RestaurantSettingsResponse mapToResponse(RestaurantSettings s) {
+        BigDecimal defaultTaxRate = s.getDefaultTaxRate();
+        BigDecimal cgstRate = s.getCgstRate();
+        BigDecimal sgstRate = s.getSgstRate();
+
+        if (defaultTaxRate != null) {
+            defaultTaxRate = defaultTaxRate.setScale(2, RoundingMode.HALF_UP);
+            if (cgstRate == null || sgstRate == null) {
+                cgstRate = defaultTaxRate.divide(BigDecimal.valueOf(2.0), 2, RoundingMode.HALF_UP);
+                sgstRate = defaultTaxRate.subtract(cgstRate).setScale(2, RoundingMode.HALF_UP);
+            }
+        }
+
+        BigDecimal totalGstRate = defaultTaxRate;
+        if (totalGstRate == null && cgstRate != null && sgstRate != null) {
+            totalGstRate = cgstRate.add(sgstRate).setScale(2, RoundingMode.HALF_UP);
+        }
+
+        String gstMode = s.getGstMode() != null ? s.getGstMode() : "GST_EXCLUDED";
+
         return RestaurantSettingsResponse.builder()
                 .id(s.getId())
                 .restaurantId(s.getRestaurant() != null ? s.getRestaurant().getId() : null)
                 .taxEnabled(s.getTaxEnabled())
-                .defaultTaxRate(s.getDefaultTaxRate())
+                .defaultTaxRate(defaultTaxRate)
+                .totalGstRate(totalGstRate)
+                .gstMode(gstMode)
+                .cgstRate(cgstRate)
+                .sgstRate(sgstRate)
                 .serviceChargeEnabled(s.getServiceChargeEnabled())
                 .defaultServiceChargeRate(s.getDefaultServiceChargeRate())
                 .currency(s.getCurrency())

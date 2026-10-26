@@ -198,12 +198,16 @@ public class PlatformOnboardingService {
                     }
                 };
 
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        wsDeactivation.run();
-                    }
-                });
+                if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            wsDeactivation.run();
+                        }
+                    });
+                } else {
+                    wsDeactivation.run();
+                }
             } else {
                 Runnable wsReactivation = () -> {
                     log.info("Executing post-commit reactivation for restaurant ID={}", id);
@@ -215,12 +219,16 @@ public class PlatformOnboardingService {
                     }
                 };
 
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        wsReactivation.run();
-                    }
-                });
+                if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            wsReactivation.run();
+                        }
+                    });
+                } else {
+                    wsReactivation.run();
+                }
             }
         }
 

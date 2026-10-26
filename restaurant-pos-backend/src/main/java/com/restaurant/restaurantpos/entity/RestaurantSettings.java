@@ -46,6 +46,15 @@ public class RestaurantSettings {
     @Column(name = "default_tax_rate", nullable = false, precision = 5, scale = 2)
     private BigDecimal defaultTaxRate = BigDecimal.ZERO.setScale(2);
 
+    @Column(name = "gst_mode", nullable = false, length = 20)
+    private String gstMode = "GST_EXCLUDED";
+
+    @Column(name = "cgst_rate", nullable = false, precision = 5, scale = 2)
+    private BigDecimal cgstRate = BigDecimal.ZERO.setScale(2);
+
+    @Column(name = "sgst_rate", nullable = false, precision = 5, scale = 2)
+    private BigDecimal sgstRate = BigDecimal.ZERO.setScale(2);
+
     @Column(name = "service_charge_enabled", nullable = false)
     private Boolean serviceChargeEnabled = false;
 
@@ -86,6 +95,9 @@ public class RestaurantSettings {
         this.updatedAt = now;
         if (this.taxEnabled == null) this.taxEnabled = true;
         if (this.defaultTaxRate == null) this.defaultTaxRate = BigDecimal.ZERO.setScale(2);
+        if (this.gstMode == null) this.gstMode = "GST_EXCLUDED";
+        if (this.cgstRate == null) this.cgstRate = BigDecimal.ZERO.setScale(2);
+        if (this.sgstRate == null) this.sgstRate = BigDecimal.ZERO.setScale(2);
         if (this.serviceChargeEnabled == null) this.serviceChargeEnabled = false;
         if (this.defaultServiceChargeRate == null) this.defaultServiceChargeRate = BigDecimal.ZERO.setScale(2);
         if (this.currency == null) this.currency = "INR";

@@ -63,6 +63,18 @@ public class Step25NotificationTest {
     @Mock
     private MessageChannel messageChannel;
 
+    @Mock
+    private com.restaurant.restaurantpos.service.JwtService jwtService;
+
+    @Mock
+    private com.restaurant.restaurantpos.service.CustomUserDetailsService userDetailsService;
+
+    @Mock
+    private com.restaurant.restaurantpos.service.TokenRevocationService tokenRevocationService;
+
+    @Mock
+    private com.restaurant.restaurantpos.security.WebSocketSessionRevocationManager webSocketSessionRevocationManager;
+
     @InjectMocks
     private NotificationService notificationService;
 
@@ -316,6 +328,7 @@ public class Step25NotificationTest {
     void testStompNotificationSubscriptionSecurity() {
         // Valid subscription: User 10L subscribing to own notification topic /topic/restaurants/1/notifications/10
         StompHeaderAccessor accessorValid = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessorValid.setSessionId("sess-notif-1");
         accessorValid.setDestination("/topic/restaurants/1/notifications/10");
         UsernamePasswordAuthenticationToken authAdmin = new UsernamePasswordAuthenticationToken(customAdminA, null, customAdminA.getAuthorities());
         accessorValid.setUser(authAdmin);
@@ -325,6 +338,7 @@ public class Step25NotificationTest {
 
         // Invalid: User 10L trying to subscribe to User 20L notification topic
         StompHeaderAccessor accessorOtherUser = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessorOtherUser.setSessionId("sess-notif-2");
         accessorOtherUser.setDestination("/topic/restaurants/1/notifications/20");
         accessorOtherUser.setUser(authAdmin);
 
@@ -332,6 +346,7 @@ public class Step25NotificationTest {
 
         // Invalid: User 10L trying to subscribe to Restaurant 2 notification topic
         StompHeaderAccessor accessorOtherTenant = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessorOtherTenant.setSessionId("sess-notif-3");
         accessorOtherTenant.setDestination("/topic/restaurants/2/notifications/10");
         accessorOtherTenant.setUser(authAdmin);
 
@@ -342,6 +357,7 @@ public class Step25NotificationTest {
     @Test
     void testExistingKitchenWebSocketStillWorks() {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessor.setSessionId("sess-kitchen-1");
         accessor.setDestination("/topic/restaurants/1/kitchen/orders");
         UsernamePasswordAuthenticationToken authAdmin = new UsernamePasswordAuthenticationToken(customAdminA, null, customAdminA.getAuthorities());
         accessor.setUser(authAdmin);

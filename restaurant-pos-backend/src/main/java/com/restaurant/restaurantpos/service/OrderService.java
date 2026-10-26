@@ -26,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -37,9 +38,11 @@ import java.util.stream.Collectors;
 
 import com.restaurant.restaurantpos.event.KitchenOrderEventPublisher;
 
+import com.restaurant.restaurantpos.entity.RestaurantSettings;
 import com.restaurant.restaurantpos.exception.KitchenWorkflowDisabledException;
 import com.restaurant.restaurantpos.exception.OrderWorkflowConflictException;
 import com.restaurant.restaurantpos.repository.RestaurantSettingsRepository;
+import com.restaurant.restaurantpos.util.GstCalculator;
 import org.springframework.beans.factory.annotation.Autowired;
 
 @Service
@@ -225,9 +228,7 @@ public class OrderService {
             orderItemsToSave.add(orderItem);
         }
 
-        BigDecimal taxAmount = BigDecimal.ZERO.setScale(2);
         BigDecimal discountAmount = BigDecimal.ZERO.setScale(2);
-        BigDecimal totalAmount = subtotal.add(taxAmount).subtract(discountAmount);
 
         Order order = new Order();
         order.setRestaurant(restaurantRepository.getReferenceById(restaurantId));
@@ -236,11 +237,9 @@ public class OrderService {
         order.setWaiter(waiter);
         order.setOrderType(orderType);
         order.setStatus("NEW");
-        order.setSubtotal(subtotal);
-        order.setTaxAmount(taxAmount);
-        order.setDiscountAmount(discountAmount);
-        order.setTotalAmount(totalAmount);
         order.setNotes(request.getNotes());
+
+        calculateAndApplyGst(order, restaurantId, subtotal, discountAmount);
 
         Order savedOrder = orderRepository.save(order);
 
@@ -463,8 +462,9 @@ public class OrderService {
             orderItemsToSave.add(orderItem);
         }
 
-        order.setSubtotal(subtotal);
-        order.setTotalAmount(subtotal.add(order.getTaxAmount()).subtract(order.getDiscountAmount()));
+        BigDecimal discountAmount = order.getDiscountAmount() != null ? order.getDiscountAmount() : BigDecimal.ZERO.setScale(2);
+        Long targetRestaurantId = order.getRestaurant() != null && order.getRestaurant().getId() != null ? order.getRestaurant().getId() : restaurantId;
+        calculateAndApplyGst(order, targetRestaurantId, subtotal, discountAmount);
         if (request.getNotes() != null) {
             order.setNotes(request.getNotes());
         }
@@ -636,8 +636,16 @@ public class OrderService {
                 .map(OrderItem::getSubtotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        order.setSubtotal(subtotal);
-        order.setTotalAmount(subtotal.add(order.getTaxAmount()).subtract(order.getDiscountAmount()));
+        if (order.getGstMode() == null) {
+            order.setSubtotal(subtotal);
+            BigDecimal tax = order.getTaxAmount() != null ? order.getTaxAmount() : BigDecimal.ZERO.setScale(2);
+            BigDecimal discount = order.getDiscountAmount() != null ? order.getDiscountAmount() : BigDecimal.ZERO.setScale(2);
+            order.setTotalAmount(subtotal.add(tax).subtract(discount));
+        } else {
+            BigDecimal discountAmount = order.getDiscountAmount() != null ? order.getDiscountAmount() : BigDecimal.ZERO.setScale(2);
+            Long targetRestaurantId = order.getRestaurant() != null && order.getRestaurant().getId() != null ? order.getRestaurant().getId() : restaurantId;
+            calculateAndApplyGst(order, targetRestaurantId, subtotal, discountAmount);
+        }
 
         if (kitchenEnabled && "READY".equalsIgnoreCase(order.getStatus())) {
             order.setStatus("PREPARING");
@@ -889,6 +897,11 @@ public class OrderService {
                 .status(order.getStatus())
                 .subtotal(order.getSubtotal())
                 .taxAmount(order.getTaxAmount())
+                .gstMode(order.getGstMode())
+                .cgstRate(order.getCgstRate())
+                .sgstRate(order.getSgstRate())
+                .cgstAmount(order.getCgstAmount())
+                .sgstAmount(order.getSgstAmount())
                 .discountAmount(order.getDiscountAmount())
                 .totalAmount(order.getTotalAmount())
                 .notes(order.getNotes())
@@ -1010,6 +1023,77 @@ public class OrderService {
         return settingsRepository.findByRestaurantId(restaurantId)
                 .map(s -> s.getKitchenEnabled() != null ? s.getKitchenEnabled() : true)
                 .orElse(true);
+    }
+
+    private void calculateAndApplyGst(Order order, Long restaurantId, BigDecimal subtotal, BigDecimal discountAmount) {
+        RestaurantSettings settings = getRestaurantSettings(restaurantId);
+
+        boolean hasGstSettings = settings != null && (settings.getDefaultTaxRate() != null || settings.getGstMode() != null);
+        boolean hasExistingGst = order.getGstMode() != null;
+
+        if (!hasGstSettings && !hasExistingGst) {
+            order.setSubtotal(subtotal);
+            BigDecimal tax = order.getTaxAmount() != null ? order.getTaxAmount() : BigDecimal.ZERO.setScale(2);
+            BigDecimal discount = discountAmount != null ? discountAmount : (order.getDiscountAmount() != null ? order.getDiscountAmount() : BigDecimal.ZERO.setScale(2));
+            order.setDiscountAmount(discount);
+            order.setTaxAmount(tax);
+            order.setTotalAmount(subtotal.add(tax).subtract(discount));
+            return;
+        }
+
+        boolean taxEnabled = true;
+        BigDecimal defaultTaxRate = BigDecimal.ZERO.setScale(2);
+        String gstModeStr = "GST_EXCLUDED";
+        BigDecimal cgstRate = BigDecimal.ZERO.setScale(2);
+        BigDecimal sgstRate = BigDecimal.ZERO.setScale(2);
+
+        if (settings != null) {
+            if (settings.getTaxEnabled() != null) {
+                taxEnabled = settings.getTaxEnabled();
+            }
+            if (settings.getDefaultTaxRate() != null) {
+                defaultTaxRate = settings.getDefaultTaxRate().setScale(2, RoundingMode.HALF_UP);
+            }
+            if (settings.getGstMode() != null && !settings.getGstMode().isBlank()) {
+                gstModeStr = settings.getGstMode().trim();
+            }
+            if (settings.getCgstRate() != null) {
+                cgstRate = settings.getCgstRate().setScale(2, RoundingMode.HALF_UP);
+            } else {
+                cgstRate = defaultTaxRate.divide(BigDecimal.valueOf(2.0), 2, RoundingMode.HALF_UP);
+            }
+            if (settings.getSgstRate() != null) {
+                sgstRate = settings.getSgstRate().setScale(2, RoundingMode.HALF_UP);
+            } else {
+                sgstRate = defaultTaxRate.subtract(cgstRate).setScale(2, RoundingMode.HALF_UP);
+            }
+        }
+
+        GstCalculator.GstCalculationResult result = GstCalculator.calculate(
+                subtotal,
+                discountAmount != null ? discountAmount : BigDecimal.ZERO.setScale(2),
+                gstModeStr,
+                cgstRate,
+                sgstRate,
+                taxEnabled
+        );
+
+        order.setSubtotal(result.getSubtotal());
+        order.setDiscountAmount(result.getDiscountAmount());
+        order.setTaxAmount(result.getCombinedTaxAmount());
+        order.setTotalAmount(result.getTotalPayable());
+        order.setGstMode(result.getGstMode().name());
+        order.setCgstRate(result.getCgstRate());
+        order.setSgstRate(result.getSgstRate());
+        order.setCgstAmount(result.getCgstAmount());
+        order.setSgstAmount(result.getSgstAmount());
+    }
+
+    private RestaurantSettings getRestaurantSettings(Long restaurantId) {
+        if (restaurantId == null || settingsRepository == null) {
+            return null;
+        }
+        return settingsRepository.findByRestaurantId(restaurantId).orElse(null);
     }
 }
 

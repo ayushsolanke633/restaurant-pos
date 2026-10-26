@@ -114,6 +114,10 @@ public class RestaurantSettingsPersistenceIntegrationTest {
     @AfterEach
     void tearDown() {
         SecurityContextHolder.clearContext();
+        settingsRepository.deleteAll();
+        userRepository.deleteAll();
+        tableRepository.deleteAll();
+        restaurantRepository.deleteAll();
     }
 
     @Test

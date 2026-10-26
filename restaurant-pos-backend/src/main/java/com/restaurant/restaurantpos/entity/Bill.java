@@ -51,6 +51,21 @@ public class Bill {
     @Column(name = "tax_amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal taxAmount;
 
+    @Column(name = "gst_mode", length = 20)
+    private String gstMode;
+
+    @Column(name = "cgst_rate", precision = 5, scale = 2)
+    private BigDecimal cgstRate;
+
+    @Column(name = "sgst_rate", precision = 5, scale = 2)
+    private BigDecimal sgstRate;
+
+    @Column(name = "cgst_amount", nullable = false, precision = 10, scale = 2)
+    private BigDecimal cgstAmount = BigDecimal.ZERO.setScale(2);
+
+    @Column(name = "sgst_amount", nullable = false, precision = 10, scale = 2)
+    private BigDecimal sgstAmount = BigDecimal.ZERO.setScale(2);
+
     @Column(name = "discount_amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal discountAmount;
 
@@ -67,5 +82,11 @@ public class Bill {
     @PrePersist
     protected void onCreate() {
         this.createdAt = LocalDateTime.now();
+        if (this.cgstAmount == null) {
+            this.cgstAmount = BigDecimal.ZERO.setScale(2);
+        }
+        if (this.sgstAmount == null) {
+            this.sgstAmount = BigDecimal.ZERO.setScale(2);
+        }
     }
 }

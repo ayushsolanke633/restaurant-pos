@@ -122,6 +122,30 @@ public class Step24KitchenTest {
         assertEquals("Order Note 2", res.get(1).getNotes());
     }
 
+    // 1b. ADMIN can also GET kitchen orders
+    @Test
+    void testGetKitchenOrdersAsAdminSuccess() {
+        when(securityUtils.getCurrentUserRole()).thenReturn("ADMIN");
+        when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
+
+        Order order1 = new Order();
+        order1.setId(100L);
+        order1.setRestaurant(restaurantA);
+        order1.setStatus("NEW");
+        order1.setOrderType("DINE_IN");
+        order1.setTable(table1);
+        order1.setNotes("Order Note 1");
+        order1.setCreatedAt(LocalDateTime.now().minusMinutes(10));
+
+        when(orderRepository.findByRestaurantIdAndStatusInOrderByCreatedAtAsc(eq(1L), anyCollection()))
+                .thenReturn(Collections.singletonList(order1));
+
+        List<KitchenOrderResponse> res = kitchenService.getKitchenOrders(null);
+
+        assertEquals(1, res.size());
+        assertEquals(100L, res.get(0).getOrderId());
+    }
+
     // 2, 22, 23, 24. KITCHEN can GET kitchen order detail with order and item notes
     @Test
     void testGetKitchenOrderByIdSuccess() {

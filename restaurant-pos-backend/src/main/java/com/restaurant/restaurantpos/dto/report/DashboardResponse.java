@@ -23,6 +23,8 @@ public class DashboardResponse {
     private Long pendingOrders;
     private BigDecimal totalRevenue;
     private BigDecimal totalTax;
+    private BigDecimal totalCgst;
+    private BigDecimal totalSgst;
     private BigDecimal totalDiscount;
     private BigDecimal averageOrderValue;
     private BigDecimal cashAmount;

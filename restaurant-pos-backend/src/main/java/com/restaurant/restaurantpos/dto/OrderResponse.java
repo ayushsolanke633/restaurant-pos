@@ -28,6 +28,11 @@ public class OrderResponse {
     private String status;
     private BigDecimal subtotal;
     private BigDecimal taxAmount;
+    private String gstMode;
+    private BigDecimal cgstRate;
+    private BigDecimal sgstRate;
+    private BigDecimal cgstAmount;
+    private BigDecimal sgstAmount;
     private BigDecimal discountAmount;
     private BigDecimal totalAmount;
     private String notes;

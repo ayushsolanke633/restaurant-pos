@@ -20,6 +20,10 @@ public class RestaurantSettingsResponse {
     private Long restaurantId;
     private Boolean taxEnabled;
     private BigDecimal defaultTaxRate;
+    private String gstMode;
+    private BigDecimal totalGstRate;
+    private BigDecimal cgstRate;
+    private BigDecimal sgstRate;
     private Boolean serviceChargeEnabled;
     private BigDecimal defaultServiceChargeRate;
     private String currency;

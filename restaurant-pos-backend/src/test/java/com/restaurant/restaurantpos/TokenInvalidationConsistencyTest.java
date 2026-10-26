@@ -6,6 +6,7 @@ import com.restaurant.restaurantpos.entity.Restaurant;
 import com.restaurant.restaurantpos.entity.Role;
 import com.restaurant.restaurantpos.entity.User;
 import com.restaurant.restaurantpos.repository.RestaurantRepository;
+import com.restaurant.restaurantpos.repository.RestaurantTableRepository;
 import com.restaurant.restaurantpos.repository.RevokedTokenRepository;
 import com.restaurant.restaurantpos.repository.RoleRepository;
 import com.restaurant.restaurantpos.repository.UserRepository;
@@ -75,6 +76,12 @@ public class TokenInvalidationConsistencyTest {
     @Autowired
     private RestaurantRepository restaurantRepository;
 
+    @Autowired(required = false)
+    private RestaurantTableRepository restaurantTableRepository;
+
+    @Autowired
+    private com.restaurant.restaurantpos.repository.RestaurantSettingsRepository restaurantSettingsRepository;
+
     @Autowired
     private RoleRepository roleRepository;
 
@@ -126,6 +133,12 @@ public class TokenInvalidationConsistencyTest {
         waiterSessionManager.clearAllSessions();
         revokedTokenRepository.deleteAll();
         userRepository.deleteAll();
+        if (restaurantTableRepository != null) {
+            restaurantTableRepository.deleteAll();
+        }
+        if (restaurantSettingsRepository != null) {
+            restaurantSettingsRepository.deleteAll();
+        }
         restaurantRepository.deleteAll();
 
         adminRole = roleRepository.findByName("ADMIN")
@@ -196,6 +209,12 @@ public class TokenInvalidationConsistencyTest {
         waiterSessionManager.clearAllSessions();
         revokedTokenRepository.deleteAll();
         userRepository.deleteAll();
+        if (restaurantTableRepository != null) {
+            restaurantTableRepository.deleteAll();
+        }
+        if (restaurantSettingsRepository != null) {
+            restaurantSettingsRepository.deleteAll();
+        }
         restaurantRepository.deleteAll();
     }
 
@@ -647,7 +666,7 @@ public class TokenInvalidationConsistencyTest {
             when(mockSession.isOpen()).thenReturn(true);
 
             sessionRevocationManager.registerWebSocketSession(mockSession);
-            sessionRevocationManager.bindSessionToToken(sessionId, "jti-commit-test", adminA.getId(), restaurantA.getId());
+            sessionRevocationManager.bindSessionToToken(sessionId, java.util.UUID.randomUUID().toString(), adminA.getId(), restaurantA.getId());
             restaurantWebSocketSessionManager.registerSession(sessionId, restaurantA.getId());
 
             assertFalse(sessionRevocationManager.isSessionRevoked(sessionId));
@@ -677,7 +696,7 @@ public class TokenInvalidationConsistencyTest {
             when(mockSession.isOpen()).thenReturn(true);
 
             sessionRevocationManager.registerWebSocketSession(mockSession);
-            sessionRevocationManager.bindSessionToToken(sessionId, "jti-rollback-test", adminA.getId(), restaurantA.getId());
+            sessionRevocationManager.bindSessionToToken(sessionId, java.util.UUID.randomUUID().toString(), adminA.getId(), restaurantA.getId());
             restaurantWebSocketSessionManager.registerSession(sessionId, restaurantA.getId());
 
             assertFalse(sessionRevocationManager.isSessionRevoked(sessionId));

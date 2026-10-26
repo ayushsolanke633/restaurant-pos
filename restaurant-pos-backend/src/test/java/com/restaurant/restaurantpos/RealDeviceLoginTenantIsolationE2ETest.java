@@ -10,6 +10,7 @@ import com.restaurant.restaurantpos.repository.RestaurantRepository;
 import com.restaurant.restaurantpos.repository.RestaurantTableRepository;
 import com.restaurant.restaurantpos.repository.RoleRepository;
 import com.restaurant.restaurantpos.repository.UserRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -54,6 +55,9 @@ public class RealDeviceLoginTenantIsolationE2ETest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired(required = false)
+    private com.restaurant.restaurantpos.security.LoginRateLimiter loginRateLimiter;
+
     private Restaurant restaurantAmbika;
     private Restaurant restaurantB;
 
@@ -71,6 +75,9 @@ public class RealDeviceLoginTenantIsolationE2ETest {
 
     @BeforeEach
     void setUp() throws Exception {
+        if (loginRateLimiter != null) {
+            loginRateLimiter.clear();
+        }
         userRepository.deleteAll();
         restaurantTableRepository.deleteAll();
         restaurantRepository.deleteAll();
@@ -248,5 +255,12 @@ public class RealDeviceLoginTenantIsolationE2ETest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isForbidden());
+    }
+
+    @AfterEach
+    void tearDown() {
+        restaurantTableRepository.deleteAll();
+        userRepository.deleteAll();
+        restaurantRepository.deleteAll();
     }
 }

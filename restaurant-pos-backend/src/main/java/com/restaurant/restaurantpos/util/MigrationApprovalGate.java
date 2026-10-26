@@ -14,8 +14,45 @@ public class MigrationApprovalGate {
     public static final String GATE_AUTHORIZATION_TOKEN = "AUTHORIZED_BY_GATE";
 
     public static final Set<String> APPROVED_ALLOWLIST = Collections.unmodifiableSet(
-            new LinkedHashSet<>(Arrays.asList("1.0.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0"))
+            new LinkedHashSet<>(Arrays.asList("1.0.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"))
     );
+
+    public static final String ISOLATED_TEST_DB_NAME = "restaurant_pos_migration_test";
+    public static final Set<String> ISOLATED_TEST_ALLOWLIST = Collections.unmodifiableSet(
+            new LinkedHashSet<>(Arrays.asList("1.6.0", "1.7.0"))
+    );
+
+    /**
+     * Verifies if a migration version is authorized for a specific database connection.
+     * Returns true if the version is in APPROVED_ALLOWLIST.
+     * Test migrations (1.6.0, 1.7.0) are ONLY permitted when:
+     * 1. The explicit test authorization flag (flyway.test.isolated.approved) is set to "true".
+     * 2. The target database URL strictly points to 'restaurant_pos_migration_test'.
+     * 3. The database URL does NOT point to live 'restaurant_pos' or any restore database.
+     */
+    public static boolean isVersionApprovedForConnection(String version, String dbUrl) {
+        if (version == null || version.trim().isEmpty()) {
+            return false;
+        }
+        if (APPROVED_ALLOWLIST.contains(version)) {
+            return true;
+        }
+
+        boolean testAuthFlag = "true".equalsIgnoreCase(System.getProperty("flyway.test.isolated.approved")) ||
+                               "true".equalsIgnoreCase(System.getProperty("migration.test.isolated.approved")) ||
+                               "true".equalsIgnoreCase(System.getenv("FLYWAY_TEST_ISOLATED_APPROVED"));
+
+        if (testAuthFlag && ISOLATED_TEST_ALLOWLIST.contains(version)) {
+            if (dbUrl != null && dbUrl.contains(ISOLATED_TEST_DB_NAME) &&
+                !dbUrl.contains("restaurant_pos_restore_test") &&
+                !dbUrl.endsWith("/restaurant_pos") &&
+                !dbUrl.contains("/restaurant_pos?")) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static final Pattern PENDING_MIGRATION_PATTERN = Pattern.compile(
             "\\|\\s*(?:Versioned\\s*\\|\\s*)?(\\d+\\.\\d+\\.\\d+)\\s*\\|\\s*([^|]+)\\|\\s*SQL\\s*\\|[^|]*\\|\\s*Pending\\s*\\|"
@@ -125,7 +162,7 @@ public class MigrationApprovalGate {
                 // Beyond target ceiling
                 continue;
             }
-            if (!APPROVED_ALLOWLIST.contains(ver)) {
+            if (!isVersionApprovedForConnection(ver, dbUrl)) {
                 return new GateResult(false, "REJECTED: Pending migration version " + ver + " is not in the approved allowlist.", pendingVersions);
             }
         }

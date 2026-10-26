@@ -39,10 +39,20 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
+import com.restaurant.restaurantpos.util.MigrationApprovalGate;
+import com.restaurant.restaurantpos.util.MigrationApprovalGate.DatabaseState;
+import com.restaurant.restaurantpos.util.MigrationApprovalGate.GateResult;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -646,8 +656,9 @@ public class PersistentTokenVersioningRemediationTest {
             when(mockJwtService.extractJti(testToken)).thenReturn(UUID.randomUUID().toString());
             when(mockRevocationService.isRevoked(anyString())).thenThrow(new DataAccessResourceFailureException("DB connection pool exhausted"));
 
+            WebSocketSessionRevocationManager mockSessionManager = mock(WebSocketSessionRevocationManager.class);
             StompAuthChannelInterceptor interceptor = new StompAuthChannelInterceptor(
-                    mockJwtService, mockUserDetailsService, null, null, mockRevocationService, null
+                    mockJwtService, mockUserDetailsService, null, null, mockRevocationService, mockSessionManager
             );
 
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.CONNECT);
@@ -663,8 +674,8 @@ public class PersistentTokenVersioningRemediationTest {
         @Test
         @DisplayName("STOMP SUBSCRIBE on database outage does NOT falsely revoke session in memory")
         void testStompSubscribeDatabaseOutagePreservesSession() {
-            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager();
             TokenRevocationService mockRevocationService = mock(TokenRevocationService.class);
+            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager(mockRevocationService);
 
             String sessionId = "ws-active-kitchen-session";
             String jti = UUID.randomUUID().toString();
@@ -686,15 +697,17 @@ public class PersistentTokenVersioningRemediationTest {
             assertThrows(MessageDeliveryException.class, () -> interceptor.preSend(message, mock(MessageChannel.class)));
 
             // CRITICAL: Ensure the session was NOT permanently marked as revoked in memory!
-            assertFalse(sessionRevocationManager.isSessionRevoked(sessionId),
+            assertFalse(sessionRevocationManager.isSessionExplicitlyRevoked(sessionId),
                     "Active session must NOT be falsely marked revoked due to a transient database outage");
+            doReturn(false).when(mockRevocationService).isRevoked(jti);
+            assertFalse(sessionRevocationManager.isSessionRevoked(sessionId));
         }
 
         @Test
         @DisplayName("STOMP outbound delivers normally when session and token are active and valid")
         void testStompOutboundNormalDelivery() {
-            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager();
             TokenRevocationService mockRevocationService = mock(TokenRevocationService.class);
+            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager(mockRevocationService);
 
             String sessionId = "ws-normal-outbound";
             String jti = UUID.randomUUID().toString();
@@ -716,14 +729,15 @@ public class PersistentTokenVersioningRemediationTest {
         @Test
         @DisplayName("STOMP outbound suppresses delivery when session is revoked")
         void testStompOutboundRevokedSessionSuppressed() {
-            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager();
+            TokenRevocationService mockRevocationService = mock(TokenRevocationService.class);
+            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager(mockRevocationService);
             String sessionId = "ws-revoked-session";
             String jti = UUID.randomUUID().toString();
             sessionRevocationManager.bindSessionToToken(sessionId, jti, 10L, 5L);
             sessionRevocationManager.invalidateSessionsForRestaurant(5L); // Revoke session
 
             StompOutboundChannelInterceptor interceptor =
-                    new StompOutboundChannelInterceptor(sessionRevocationManager, mock(TokenRevocationService.class));
+                    new StompOutboundChannelInterceptor(sessionRevocationManager, mockRevocationService);
 
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.MESSAGE);
             accessor.setSessionId(sessionId);
@@ -736,8 +750,8 @@ public class PersistentTokenVersioningRemediationTest {
         @Test
         @DisplayName("STOMP outbound suppresses delivery when token jti is revoked")
         void testStompOutboundRevokedTokenSuppressed() {
-            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager();
             TokenRevocationService mockRevocationService = mock(TokenRevocationService.class);
+            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager(mockRevocationService);
 
             String sessionId = "ws-revoked-token-session";
             String jti = UUID.randomUUID().toString();
@@ -759,8 +773,8 @@ public class PersistentTokenVersioningRemediationTest {
         @Test
         @DisplayName("STOMP outbound suppresses delivery fail-closed on database outage (SEC-3L-01)")
         void testStompOutboundDatabaseFailureSuppressesDeliveryFailClosed() {
-            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager();
             TokenRevocationService mockRevocationService = mock(TokenRevocationService.class);
+            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager(mockRevocationService);
 
             String sessionId = "ws-db-outage-outbound";
             String jti = UUID.randomUUID().toString();
@@ -780,8 +794,273 @@ public class PersistentTokenVersioningRemediationTest {
             assertNull(result, "Outbound message must be suppressed fail-closed when database is down");
 
             // CRITICAL: Ensure the session was NOT permanently marked revoked!
-            assertFalse(sessionRevocationManager.isSessionRevoked(sessionId),
+            assertFalse(sessionRevocationManager.isSessionExplicitlyRevoked(sessionId),
                     "Session must NOT be permanently marked revoked due to a transient database outage");
+            doReturn(false).when(mockRevocationService).isRevoked(jti);
+            assertFalse(sessionRevocationManager.isSessionRevoked(sessionId));
+        }
+
+        @Test
+        @DisplayName("STOMP outbound sanitizes log output: never logs SQL error details or database credentials")
+        void testStompOutboundSanitizesDatabaseErrorLogs() {
+            Logger interceptorLogger = (Logger) LoggerFactory.getLogger(StompOutboundChannelInterceptor.class);
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+            interceptorLogger.addAppender(listAppender);
+
+            try {
+                TokenRevocationService mockRevocationService = mock(TokenRevocationService.class);
+                WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager(mockRevocationService);
+
+                String sessionId = "ws-sensitive-log-check";
+                String jti = UUID.randomUUID().toString();
+                sessionRevocationManager.bindSessionToToken(sessionId, jti, 10L, 5L);
+
+                String sensitiveSqlMessage = "FATAL: password authentication failed for user 'postgres' at host 10.0.0.1:5432; SELECT * FROM secret_table WHERE jti = 'secret-jti'";
+                when(mockRevocationService.isRevoked(jti))
+                        .thenThrow(new DataAccessResourceFailureException(sensitiveSqlMessage));
+
+                StompOutboundChannelInterceptor interceptor =
+                        new StompOutboundChannelInterceptor(sessionRevocationManager, mockRevocationService);
+
+                StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.MESSAGE);
+                accessor.setSessionId(sessionId);
+                Message<?> message = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
+
+                Message<?> result = interceptor.preSend(message, mock(MessageChannel.class));
+                assertNull(result, "Outbound message must be suppressed fail-closed");
+                assertFalse(sessionRevocationManager.isSessionExplicitlyRevoked(sessionId), "Session must not be permanently revoked");
+                doReturn(false).when(mockRevocationService).isRevoked(jti);
+                assertFalse(sessionRevocationManager.isSessionRevoked(sessionId));
+
+                // Verify logs are completely sanitized
+                assertFalse(listAppender.list.isEmpty(), "At least one log event must be generated");
+                for (ILoggingEvent event : listAppender.list) {
+                    String formatted = event.getFormattedMessage();
+                    assertFalse(formatted.contains("password"), "Must not leak 'password'");
+                    assertFalse(formatted.contains("postgres"), "Must not leak database username");
+                    assertFalse(formatted.contains("10.0.0.1"), "Must not leak database host/ip");
+                    assertFalse(formatted.contains("secret_table"), "Must not leak table name or SQL fragments");
+                    assertFalse(formatted.contains("secret-jti"), "Must not leak sensitive tokens or query parameters");
+                }
+
+                // Verify safe structured fields are logged
+                boolean hasSafeFields = listAppender.list.stream().anyMatch(e ->
+                        e.getFormattedMessage().contains("operation=checkOutboundRevocation") &&
+                        e.getFormattedMessage().contains("errorClass=DataAccessResourceFailureException")
+                );
+                assertTrue(hasSafeFields, "Log output must include safe operation and errorClass structured fields");
+            } finally {
+                interceptorLogger.detachAppender(listAppender);
+                listAppender.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("WebSocketSessionRevocationManager sanitizes log output: never logs SQL error details")
+        void testWebSocketSessionRevocationManagerSanitizesLogs() {
+            Logger managerLogger = (Logger) LoggerFactory.getLogger(WebSocketSessionRevocationManager.class);
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+            managerLogger.addAppender(listAppender);
+
+            try {
+                TokenRevocationService mockRevocationService = mock(TokenRevocationService.class);
+                WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager(mockRevocationService);
+
+                String sessionId = "ws-mgr-log-check";
+                String jti = UUID.randomUUID().toString();
+                sessionRevocationManager.bindSessionToToken(sessionId, jti, 10L, 5L);
+
+                String sensitiveDbMessage = "Connection refused to jdbc:postgresql://secure-db:5432/pos; password=adminsecret";
+                when(mockRevocationService.isRevoked(jti))
+                        .thenThrow(new DataAccessResourceFailureException(sensitiveDbMessage));
+
+                WebSocketSessionRevocationManager mgrWithService =
+                        new WebSocketSessionRevocationManager(mockRevocationService);
+                mgrWithService.bindSessionToToken(sessionId, jti, 10L, 5L);
+
+                assertThrows(DataAccessResourceFailureException.class, () ->
+                        mgrWithService.isSessionRevoked(sessionId)
+                );
+
+                assertFalse(listAppender.list.isEmpty(), "Log event must be generated on storage failure");
+                for (ILoggingEvent event : listAppender.list) {
+                    String formatted = event.getFormattedMessage();
+                    assertFalse(formatted.contains("adminsecret"), "Must not leak password");
+                    assertFalse(formatted.contains("secure-db"), "Must not leak host");
+                    assertFalse(formatted.contains("jdbc:postgresql"), "Must not leak JDBC URL");
+                }
+
+                boolean hasSafeFields = listAppender.list.stream().anyMatch(e ->
+                        e.getFormattedMessage().contains("operation=checkSessionRevocation") &&
+                        e.getFormattedMessage().contains("errorClass=DataAccessResourceFailureException")
+                );
+                assertTrue(hasSafeFields, "Log output must include safe operation and errorClass");
+            } finally {
+                managerLogger.detachAppender(listAppender);
+                listAppender.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("TokenRevocationService sanitizes log output: never logs SQL messages or credentials")
+        void testTokenRevocationServiceSanitizesLogs() {
+            Logger serviceLogger = (Logger) LoggerFactory.getLogger(TokenRevocationService.class);
+            ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+            listAppender.start();
+            serviceLogger.addAppender(listAppender);
+
+            try {
+                RevokedTokenRepository repo = mock(RevokedTokenRepository.class);
+                String validJti = UUID.randomUUID().toString();
+                String sensitiveMessage = "PSQLException: Connection reset by peer at 172.28.0.2:5432 (user: restaurant_app, pass: db_secret_123)";
+                when(repo.existsByJti(validJti))
+                        .thenThrow(new DataAccessResourceFailureException(sensitiveMessage));
+
+                TokenRevocationService service = new TokenRevocationService(repo, jwtService);
+
+                assertThrows(DataAccessResourceFailureException.class, () -> service.isRevoked(validJti));
+
+                assertFalse(listAppender.list.isEmpty(), "Log event must be emitted");
+                for (ILoggingEvent event : listAppender.list) {
+                    String formatted = event.getFormattedMessage();
+                    assertFalse(formatted.contains("db_secret_123"), "Must not leak password");
+                    assertFalse(formatted.contains("172.28.0.2"), "Must not leak internal IP");
+                    assertFalse(formatted.contains("PSQLException"), "Must not leak driver internal string");
+                }
+
+                boolean hasSafeFields = listAppender.list.stream().anyMatch(e ->
+                        e.getFormattedMessage().contains("operation=checkRevocation") &&
+                        e.getFormattedMessage().contains("errorClass=DataAccessResourceFailureException")
+                );
+                assertTrue(hasSafeFields, "Log output must include safe operation and errorClass");
+            } finally {
+                serviceLogger.detachAppender(listAppender);
+                listAppender.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("STOMP outbound catches unexpected exceptions fail-closed without delivery bypass")
+        void testStompOutboundCatchesUnexpectedExceptionFailClosed() {
+            TokenRevocationService mockRevocationService = mock(TokenRevocationService.class);
+            WebSocketSessionRevocationManager sessionRevocationManager = new WebSocketSessionRevocationManager(mockRevocationService);
+
+            String sessionId = "ws-unexpected-error-session";
+            String jti = UUID.randomUUID().toString();
+            sessionRevocationManager.bindSessionToToken(sessionId, jti, 10L, 5L);
+
+            when(mockRevocationService.isRevoked(jti))
+                    .thenThrow(new NullPointerException("Simulated unexpected null pointer in revocation layer"));
+
+            StompOutboundChannelInterceptor interceptor =
+                    new StompOutboundChannelInterceptor(sessionRevocationManager, mockRevocationService);
+
+            StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.MESSAGE);
+            accessor.setSessionId(sessionId);
+            Message<?> message = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
+
+            Message<?> result = interceptor.preSend(message, mock(MessageChannel.class));
+            assertNull(result, "Unexpected exception must fail-closed and suppress outbound delivery");
+            assertFalse(sessionRevocationManager.isSessionExplicitlyRevoked(sessionId),
+                    "Session must not be permanently marked revoked on transient unexpected exception");
+            doReturn(false).when(mockRevocationService).isRevoked(jti);
+            assertFalse(sessionRevocationManager.isSessionRevoked(sessionId));
+        }
+    }
+
+    // =========================================================================
+    // 4. MIGRATION DRAFT CONTRACT TESTS
+    // =========================================================================
+    @Nested
+    @DisplayName("4. Migration Draft Contract & Safety Verification Tests")
+    class MigrationDraftContractTests {
+
+        private static final Path MIGRATION_DIR = Paths.get("src", "main", "resources", "db", "migration");
+        private static final String V1_7_0_FILENAME = "V1_7_0__add_token_version_to_restaurants.sql";
+
+        @Test
+        @DisplayName("V1_7_0 migration file exists and adheres to naming convention")
+        void testV1_7_0FileConventionAndExpectedSchema() throws Exception {
+            Path v1_7_0Path = MIGRATION_DIR.resolve(V1_7_0_FILENAME);
+            assertTrue(Files.exists(v1_7_0Path), "V1_7_0 migration file must exist at " + v1_7_0Path);
+
+            assertTrue(V1_7_0_FILENAME.matches("^V1_7_0__[a-z0-9_]+\\.sql$"),
+                    "Filename must strictly match Flyway versioning pattern V1_7_0__description.sql");
+
+            String sql = Files.readString(v1_7_0Path, StandardCharsets.UTF_8);
+            assertNotNull(sql);
+            assertFalse(sql.isBlank(), "Migration SQL must not be blank");
+
+            // Verify table and column specifications
+            assertTrue(sql.contains("ALTER TABLE restaurants"), "SQL must alter restaurants table");
+            assertTrue(sql.contains("ADD COLUMN IF NOT EXISTS token_version"), "SQL must add token_version column idempotently");
+            assertTrue(sql.contains("INTEGER NOT NULL DEFAULT 1"), "token_version must be INTEGER NOT NULL DEFAULT 1");
+        }
+
+        @Test
+        @DisplayName("Unapproved migration version 1.9.0 is strictly rejected by Gate allowlist")
+        void testUnapprovedMigrationVersionRejectedByGateAllowlist() {
+            // Confirm intended policy: 1.6.0, 1.7.0, and 1.8.0 are approved; draft/future versions are unapproved
+            assertTrue(MigrationApprovalGate.APPROVED_ALLOWLIST.contains("1.6.0"),
+                    "Version 1.6.0 must be in approved allowlist");
+            assertTrue(MigrationApprovalGate.APPROVED_ALLOWLIST.contains("1.7.0"),
+                    "Version 1.7.0 must be in approved allowlist");
+            assertTrue(MigrationApprovalGate.APPROVED_ALLOWLIST.contains("1.8.0"),
+                    "Version 1.8.0 must be in approved allowlist");
+            assertFalse(MigrationApprovalGate.APPROVED_ALLOWLIST.contains("1.1.0"),
+                    "Draft version 1.1.0 must remain unapproved in allowlist");
+            assertFalse(MigrationApprovalGate.APPROVED_ALLOWLIST.contains("1.9.0"),
+                    "Future version 1.9.0 must remain unapproved in allowlist");
+
+            // Illustrative test double fixture simulating pending unapproved version 1.9.0
+            String pendingOutputWithUnapprovedV1_9_0 =
+                    "+-----------+---------+-----------------------------------+------+---------------------+---------+\n" +
+                    "| Category  | Version | Description                       | Type | Installed On        | State   |\n" +
+                    "+-----------+---------+-----------------------------------+------+---------------------+---------+\n" +
+                    "| Versioned | 1.0.0   | baseline schema                   | SQL  |                     | Success |\n" +
+                    "| Versioned | 1.7.0   | add token version to restaurants  | SQL  |                     | Success |\n" +
+                    "| Versioned | 1.9.0   | unapproved future migration       | SQL  |                     | Pending |\n" +
+                    "+-----------+---------+-----------------------------------+------+---------------------+---------+\n";
+
+            GateResult result = MigrationApprovalGate.evaluate(
+                    "jdbc:postgresql://localhost:5432/restaurant_pos",
+                    "restaurant_app",
+                    "valid_pass",
+                    DatabaseState.VERSIONED_WITH_HISTORY,
+                    pendingOutputWithUnapprovedV1_9_0,
+                    "1.9.0",
+                    MigrationApprovalGate.GATE_AUTHORIZATION_TOKEN
+            );
+
+            assertFalse(result.isAuthorized(), "Gate must strictly reject pending migration 1.9.0");
+            assertTrue(result.getMessage().contains("1.9.0 is not in the approved allowlist"),
+                    "Rejection message must cite unapproved version 1.9.0");
+        }
+
+        @Test
+        @DisplayName("V1_7_0 ordering and compatibility with preceding migrations")
+        void testV1_7_0OrderingAndCompatibilityWithPrecedingMigrations() throws Exception {
+            // Verify V1_0_0 exists and defines restaurants table
+            Path v1_0_0Path = MIGRATION_DIR.resolve("V1_0_0__existing_schema.sql");
+            assertTrue(Files.exists(v1_0_0Path), "V1_0_0 must exist as baseline schema");
+            String v1_0_0Sql = Files.readString(v1_0_0Path, StandardCharsets.UTF_8);
+            assertTrue(v1_0_0Sql.contains("CREATE TABLE") && v1_0_0Sql.contains("restaurants"),
+                    "V1_0_0 must define restaurants table");
+
+            // Verify version ordering
+            assertTrue(MigrationApprovalGate.compareVersions("1.0.0", "1.7.0") < 0);
+            assertTrue(MigrationApprovalGate.compareVersions("1.5.0", "1.7.0") < 0);
+            assertTrue(MigrationApprovalGate.compareVersions("1.6.0", "1.7.0") < 0);
+
+            // Read V1_7_0 content to verify no external table coupling
+            Path v1_7_0Path = MIGRATION_DIR.resolve(V1_7_0_FILENAME);
+            String v1_7_0Sql = Files.readString(v1_7_0Path, StandardCharsets.UTF_8);
+
+            // Must NOT depend on revoked_tokens or users.token_version
+            assertFalse(v1_7_0Sql.contains("revoked_tokens"), "V1_7_0 must not reference revoked_tokens");
+            assertFalse(v1_7_0Sql.contains("users"), "V1_7_0 must not reference users table");
         }
     }
 }

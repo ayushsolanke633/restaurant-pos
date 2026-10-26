@@ -44,6 +44,9 @@ public class TenantRestaurantManagementAuthorizationTest {
     private RestaurantRepository restaurantRepository;
 
     @Autowired
+    private com.restaurant.restaurantpos.repository.RestaurantSettingsRepository restaurantSettingsRepository;
+
+    @Autowired
     private UserRepository userRepository;
 
     @Autowired
@@ -84,6 +87,7 @@ public class TenantRestaurantManagementAuthorizationTest {
     @BeforeEach
     void setUp() {
         SecurityContextHolder.clearContext();
+        restaurantSettingsRepository.deleteAll();
         userRepository.deleteAll();
         restaurantRepository.deleteAll();
 

@@ -34,6 +34,11 @@ public class ReportBillResponse {
     private BigDecimal discount;
     private BigDecimal taxAmount;
     private BigDecimal tax;
+    private String gstMode;
+    private BigDecimal cgstRate;
+    private BigDecimal sgstRate;
+    private BigDecimal cgstAmount;
+    private BigDecimal sgstAmount;
     private BigDecimal totalAmount;
     private BigDecimal total;
     private List<ReportBillItemResponse> items;

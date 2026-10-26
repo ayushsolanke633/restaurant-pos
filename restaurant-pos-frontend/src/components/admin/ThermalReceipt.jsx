@@ -45,6 +45,17 @@ export const ThermalReceipt = ({ bill, order, settings: propSettings, paperWidth
   const discountAmount = Number(bill?.discountAmount ?? order?.discountAmount ?? 0);
   const totalAmount = Number(bill?.totalAmount ?? order?.totalAmount ?? subtotal + taxAmount - discountAmount);
 
+  const gstMode = bill?.gstMode ?? order?.gstMode ?? null;
+  const cgstRate = bill?.cgstRate != null ? Number(bill.cgstRate) : (order?.cgstRate != null ? Number(order.cgstRate) : null);
+  const sgstRate = bill?.sgstRate != null ? Number(bill.sgstRate) : (order?.sgstRate != null ? Number(order.sgstRate) : null);
+  const cgstAmount = Number(bill?.cgstAmount ?? order?.cgstAmount ?? 0);
+  const sgstAmount = Number(bill?.sgstAmount ?? order?.sgstAmount ?? 0);
+
+  const isGstBill = Boolean(gstMode);
+  const taxableAmount = gstMode === 'GST_INCLUDED'
+    ? Math.max(0, totalAmount - taxAmount)
+    : Math.max(0, subtotal - discountAmount);
+
   const restaurantName = settings?.restaurantName || 'AnnaDhara';
   const address = settings?.address || '';
   const phone = settings?.phone || '';
@@ -156,11 +167,28 @@ export const ThermalReceipt = ({ bill, order, settings: propSettings, paperWidth
               <span>-{CURRENCY_SYMBOL}{discountAmount.toFixed(2)}</span>
             </div>
           )}
-          {taxAmount > 0 && (
-            <div className="total-row">
-              <span>Tax:</span>
-              <span>{CURRENCY_SYMBOL}{taxAmount.toFixed(2)}</span>
-            </div>
+          {isGstBill ? (
+            <>
+              <div className="total-row">
+                <span>Taxable Amount:</span>
+                <span>{CURRENCY_SYMBOL}{taxableAmount.toFixed(2)}</span>
+              </div>
+              <div className="total-row">
+                <span>CGST {cgstRate != null ? `(${cgstRate}%)` : ''}:</span>
+                <span>{CURRENCY_SYMBOL}{cgstAmount.toFixed(2)}</span>
+              </div>
+              <div className="total-row">
+                <span>SGST {sgstRate != null ? `(${sgstRate}%)` : ''}:</span>
+                <span>{CURRENCY_SYMBOL}{sgstAmount.toFixed(2)}</span>
+              </div>
+            </>
+          ) : (
+            taxAmount > 0 && (
+              <div className="total-row">
+                <span>Tax:</span>
+                <span>{CURRENCY_SYMBOL}{taxAmount.toFixed(2)}</span>
+              </div>
+            )
           )}
           <div className="thermal-divider-single"></div>
           <div className="total-row grand-total-row font-bold">

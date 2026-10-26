@@ -738,6 +738,8 @@ public class MultiTenantBackendIsolationTest {
         @Mock private JwtService jwtService;
         @Mock private CustomUserDetailsService userDetailsService;
         @Mock private MessageChannel messageChannel;
+        @Mock private com.restaurant.restaurantpos.service.TokenRevocationService tokenRevocationService;
+        @Mock private com.restaurant.restaurantpos.security.WebSocketSessionRevocationManager webSocketSessionRevocationManager;
 
         @InjectMocks private StompAuthChannelInterceptor stompInterceptor;
 
@@ -756,6 +758,7 @@ public class MultiTenantBackendIsolationTest {
         @DisplayName("Client SEND frame to /topic destination is rejected")
         void testClientSendToTopicDestinationRejected() {
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SEND);
+            accessor.setSessionId("sess-send-1");
             accessor.setDestination("/topic/restaurants/" + tenantA.getId() + "/kitchen/orders");
             UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(kitchenUserTenantA, null, kitchenUserTenantA.getAuthorities());
             accessor.setUser(auth);
@@ -768,6 +771,7 @@ public class MultiTenantBackendIsolationTest {
         @DisplayName("Client SEND frame to general /topic destination is rejected")
         void testClientSendToGeneralTopicDestinationRejected() {
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SEND);
+            accessor.setSessionId("sess-send-2");
             accessor.setDestination("/topic/orders");
             UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(kitchenUserTenantA, null, kitchenUserTenantA.getAuthorities());
             accessor.setUser(auth);
@@ -789,6 +793,7 @@ public class MultiTenantBackendIsolationTest {
         @DisplayName("KITCHEN user of Tenant A can subscribe to Tenant A Kitchen topic")
         void testKitchenUserCanSubscribeOwnTenantKitchenTopic() {
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+            accessor.setSessionId("sess-sub-1");
             accessor.setDestination("/topic/restaurants/" + tenantA.getId() + "/kitchen/orders");
             UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(kitchenUserTenantA, null, kitchenUserTenantA.getAuthorities());
             accessor.setUser(auth);
@@ -802,6 +807,7 @@ public class MultiTenantBackendIsolationTest {
         @DisplayName("KITCHEN user of Tenant B CANNOT subscribe to Tenant A Kitchen topic (cross-tenant rejected)")
         void testCrossTenantKitchenSubscriptionRejected() {
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+            accessor.setSessionId("sess-sub-2");
             accessor.setDestination("/topic/restaurants/" + tenantA.getId() + "/kitchen/orders");
             UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(kitchenUserTenantB, null, kitchenUserTenantB.getAuthorities());
             accessor.setUser(auth);
@@ -814,6 +820,7 @@ public class MultiTenantBackendIsolationTest {
         @DisplayName("WAITER of Tenant A CANNOT subscribe to Tenant A Kitchen topic (role unauthorized)")
         void testRoleUnauthorizedSubscriptionRejected() {
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+            accessor.setSessionId("sess-sub-3");
             accessor.setDestination("/topic/restaurants/" + tenantA.getId() + "/kitchen/orders");
             UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(waiterUserTenantA, null, waiterUserTenantA.getAuthorities());
             accessor.setUser(auth);
@@ -826,6 +833,7 @@ public class MultiTenantBackendIsolationTest {
         @DisplayName("Notification topic: User cannot subscribe to another tenant's notification destination")
         void testCrossTenantNotificationSubscriptionRejected() {
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+            accessor.setSessionId("sess-sub-4");
             // Target is Tenant A, User 51
             accessor.setDestination("/topic/restaurants/" + tenantA.getId() + "/notifications/51");
             // Caller is from Tenant B
@@ -840,6 +848,7 @@ public class MultiTenantBackendIsolationTest {
         @DisplayName("Unauthenticated subscriber is rejected immediately")
         void testUnauthenticatedSubscriptionRejected() {
             StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+            accessor.setSessionId("sess-sub-5");
             accessor.setDestination("/topic/restaurants/" + tenantA.getId() + "/kitchen/orders");
             // No user in accessor
 

@@ -30,7 +30,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(org.springframework.dao.DataAccessException.class)
     public ResponseEntity<Map<String, String>> handleDataAccessException(org.springframework.dao.DataAccessException ex) {
-        logger.error("Database infrastructure failure: {}", ex.getMessage());
+        logger.error("Database infrastructure failure: errorClass={}", ex.getClass().getSimpleName());
         Map<String, String> error = new HashMap<>();
         error.put("error", "Service Unavailable");
         error.put("message", "Database service temporarily unavailable");
@@ -39,7 +39,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(RevocationStorageException.class)
     public ResponseEntity<Map<String, String>> handleRevocationStorageException(RevocationStorageException ex) {
-        logger.error("Token revocation persistence failure: {}", ex.getMessage());
+        logger.error("Token revocation persistence failure: errorClass={}", ex.getClass().getSimpleName());
         Map<String, String> error = new HashMap<>();
         error.put("message", "Revocation store temporarily unavailable. Please try again.");
         return new ResponseEntity<>(error, HttpStatus.SERVICE_UNAVAILABLE);

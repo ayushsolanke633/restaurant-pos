@@ -22,6 +22,11 @@ public class BillResponse {
     private String billNumber;
     private BigDecimal subtotal;
     private BigDecimal taxAmount;
+    private String gstMode;
+    private BigDecimal cgstRate;
+    private BigDecimal sgstRate;
+    private BigDecimal cgstAmount;
+    private BigDecimal sgstAmount;
     private BigDecimal discountAmount;
     private BigDecimal totalAmount;
     private Long generatedById;

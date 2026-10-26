@@ -234,7 +234,10 @@ public class TenantIsolationDeviceBindingRegressionTest {
         assertThrows(RuntimeException.class, () -> kitchenService.getKitchenOrderById(999L));
 
         // 2. STOMP subscription check
-        StompAuthChannelInterceptor interceptor = new StompAuthChannelInterceptor(jwtService, customUserDetailsService);
+        com.restaurant.restaurantpos.service.TokenRevocationService mockRevocation = mock(com.restaurant.restaurantpos.service.TokenRevocationService.class);
+        com.restaurant.restaurantpos.security.WebSocketSessionRevocationManager sessionMgr = new com.restaurant.restaurantpos.security.WebSocketSessionRevocationManager(mockRevocation);
+        StompAuthChannelInterceptor interceptor = new StompAuthChannelInterceptor(
+                jwtService, customUserDetailsService, mockRevocation, sessionMgr);
 
         CustomUserDetails kitchenAUser = new CustomUserDetails(
                 105L, 1L, "KITCHEN", "kitchenA@alpha.com", "pwd", true,
@@ -243,6 +246,7 @@ public class TenantIsolationDeviceBindingRegressionTest {
         Authentication kitchenAuth = new UsernamePasswordAuthenticationToken(kitchenAUser, null, kitchenAUser.getAuthorities());
 
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SUBSCRIBE);
+        accessor.setSessionId("session-test-kitchen");
         accessor.setUser(kitchenAuth);
         accessor.setDestination("/topic/restaurants/2/kitchen/orders"); // Tenant B topic!
         Message<?> message = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());

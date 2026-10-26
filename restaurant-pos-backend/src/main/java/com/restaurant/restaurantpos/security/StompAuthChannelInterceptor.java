@@ -3,6 +3,8 @@ package com.restaurant.restaurantpos.security;
 import com.restaurant.restaurantpos.service.CustomUserDetailsService;
 import com.restaurant.restaurantpos.service.JwtService;
 import com.restaurant.restaurantpos.service.TokenRevocationService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -25,6 +27,8 @@ import java.util.regex.Pattern;
 @Component
 public class StompAuthChannelInterceptor implements ChannelInterceptor {
 
+    private static final Logger log = LoggerFactory.getLogger(StompAuthChannelInterceptor.class);
+
     public static final String SESSION_ATTR_JTI = "WS_AUTH_JTI";
     public static final String SESSION_ATTR_USER_ID = "WS_AUTH_USER_ID";
     public static final String SESSION_ATTR_REST_ID = "WS_AUTH_REST_ID";
@@ -39,34 +43,6 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
     private final TokenRevocationService tokenRevocationService;
     private final WebSocketSessionRevocationManager webSocketSessionRevocationManager;
 
-    public StompAuthChannelInterceptor(JwtService jwtService, CustomUserDetailsService userDetailsService) {
-        this(jwtService, userDetailsService, null, null, null, null);
-    }
-
-    public StompAuthChannelInterceptor(
-            JwtService jwtService,
-            CustomUserDetailsService userDetailsService,
-            WaiterSessionManager waiterSessionManager) {
-        this(jwtService, userDetailsService, waiterSessionManager, null, null, null);
-    }
-
-    public StompAuthChannelInterceptor(
-            JwtService jwtService,
-            CustomUserDetailsService userDetailsService,
-            WaiterSessionManager waiterSessionManager,
-            RestaurantWebSocketSessionManager restaurantWebSocketSessionManager) {
-        this(jwtService, userDetailsService, waiterSessionManager, restaurantWebSocketSessionManager, null, null);
-    }
-
-    public StompAuthChannelInterceptor(
-            JwtService jwtService,
-            CustomUserDetailsService userDetailsService,
-            WaiterSessionManager waiterSessionManager,
-            RestaurantWebSocketSessionManager restaurantWebSocketSessionManager,
-            TokenRevocationService tokenRevocationService) {
-        this(jwtService, userDetailsService, waiterSessionManager, restaurantWebSocketSessionManager, tokenRevocationService, null);
-    }
-
     @org.springframework.beans.factory.annotation.Autowired
     public StompAuthChannelInterceptor(
             JwtService jwtService,
@@ -75,12 +51,20 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
             RestaurantWebSocketSessionManager restaurantWebSocketSessionManager,
             @Lazy TokenRevocationService tokenRevocationService,
             @Lazy WebSocketSessionRevocationManager webSocketSessionRevocationManager) {
-        this.jwtService = jwtService;
-        this.userDetailsService = userDetailsService;
+        this.jwtService = java.util.Objects.requireNonNull(jwtService, "jwtService must not be null");
+        this.userDetailsService = java.util.Objects.requireNonNull(userDetailsService, "userDetailsService must not be null");
+        this.tokenRevocationService = java.util.Objects.requireNonNull(tokenRevocationService, "tokenRevocationService must not be null");
+        this.webSocketSessionRevocationManager = java.util.Objects.requireNonNull(webSocketSessionRevocationManager, "webSocketSessionRevocationManager must not be null");
         this.waiterSessionManager = waiterSessionManager;
         this.restaurantWebSocketSessionManager = restaurantWebSocketSessionManager;
-        this.tokenRevocationService = tokenRevocationService;
-        this.webSocketSessionRevocationManager = webSocketSessionRevocationManager;
+    }
+
+    public StompAuthChannelInterceptor(
+            JwtService jwtService,
+            CustomUserDetailsService userDetailsService,
+            TokenRevocationService tokenRevocationService,
+            WebSocketSessionRevocationManager webSocketSessionRevocationManager) {
+        this(jwtService, userDetailsService, null, null, tokenRevocationService, webSocketSessionRevocationManager);
     }
 
     @Override
@@ -109,8 +93,9 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
             if (token != null) {
                 try {
                     String jti = jwtService.extractJti(token);
-                    if (tokenRevocationService != null && tokenRevocationService.isRevoked(jti)) {
-                        return message;
+                    if (jti == null || jti.trim().isEmpty() || tokenRevocationService.isRevoked(jti)) {
+                        log.warn("CONNECT rejected: missing or revoked token jti");
+                        return message; // Do not authenticate
                     }
                     String userEmail = jwtService.extractUsername(token);
                     if (userEmail != null) {
@@ -118,7 +103,8 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                         if (jwtService.isTokenValid(token, userDetails) && isSessionValid(userDetails, token)) {
                             if (userDetails instanceof CustomUserDetails cud && cud.getRestaurantId() != null) {
                                 if (restaurantWebSocketSessionManager != null && restaurantWebSocketSessionManager.isRestaurantDeactivated(cud.getRestaurantId())) {
-                                    throw new AccessDeniedException("Access denied: Restaurant is deactivated");
+                                    log.warn("CONNECT rejected: restaurant {} is deactivated", cud.getRestaurantId());
+                                    return message; // Do not authenticate
                                 }
                                 if (restaurantWebSocketSessionManager != null) {
                                     restaurantWebSocketSessionManager.registerSession(accessor.getSessionId(), cud.getRestaurantId());
@@ -126,7 +112,7 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                             }
 
                             // Bind session to token jti and user identity in session revocation manager
-                            if (webSocketSessionRevocationManager != null && accessor.getSessionId() != null) {
+                            if (accessor.getSessionId() != null) {
                                 Long uid = (userDetails instanceof CustomUserDetails cud) ? cud.getUserId() : null;
                                 Long rid = (userDetails instanceof CustomUserDetails cud) ? cud.getRestaurantId() : null;
                                 webSocketSessionRevocationManager.bindSessionToToken(accessor.getSessionId(), jti, uid, rid);
@@ -150,6 +136,8 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                             return MessageBuilder.createMessage(message.getPayload(), mutableAccessor.getMessageHeaders());
                         }
                     }
+                } catch (AccessDeniedException ex) {
+                    throw ex;
                 } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
                     throw new org.springframework.messaging.MessageDeliveryException("Service temporarily unavailable");
                 } catch (Exception ex) {
@@ -223,35 +211,43 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
 
     private void assertSessionNotRevoked(StompHeaderAccessor accessor) {
         String sessionId = accessor.getSessionId();
-        if (sessionId != null && webSocketSessionRevocationManager != null) {
-            try {
-                if (webSocketSessionRevocationManager.isSessionRevoked(sessionId)) {
-                    throw new AccessDeniedException("Access denied: Token or WebSocket session has been revoked");
-                }
-                String sessionJti = webSocketSessionRevocationManager.getJtiForSession(sessionId);
-                if (sessionJti != null && tokenRevocationService != null) {
-                    if (tokenRevocationService.isRevoked(sessionJti)) {
-                        webSocketSessionRevocationManager.invalidateSessionsForJti(sessionJti);
-                        throw new AccessDeniedException("Access denied: Token has been revoked");
-                    }
-                }
-            } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
-                throw new org.springframework.messaging.MessageDeliveryException("Service temporarily unavailable");
+        if (sessionId == null || sessionId.trim().isEmpty()) {
+            throw new AccessDeniedException("Access denied: Missing WebSocket session identifier");
+        }
+
+        try {
+            if (webSocketSessionRevocationManager.isSessionRevoked(sessionId)) {
+                throw new AccessDeniedException("Access denied: Token or WebSocket session has been revoked");
             }
+            String sessionJti = webSocketSessionRevocationManager.getJtiForSession(sessionId);
+            if (sessionJti != null) {
+                if (tokenRevocationService.isRevoked(sessionJti)) {
+                    webSocketSessionRevocationManager.invalidateSessionsForJti(sessionJti);
+                    throw new AccessDeniedException("Access denied: Token has been revoked");
+                }
+            }
+        } catch (AccessDeniedException ex) {
+            throw ex;
+        } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
+            throw new org.springframework.messaging.MessageDeliveryException("Service temporarily unavailable");
+        } catch (Exception ex) {
+            throw new org.springframework.messaging.MessageDeliveryException("Service temporarily unavailable");
         }
 
         Map<String, Object> sessionAttributes = accessor.getSessionAttributes();
         if (sessionAttributes != null) {
             String attrJti = (String) sessionAttributes.get(SESSION_ATTR_JTI);
-            if (attrJti != null && tokenRevocationService != null) {
+            if (attrJti != null) {
                 try {
                     if (tokenRevocationService.isRevoked(attrJti)) {
-                        if (webSocketSessionRevocationManager != null) {
-                            webSocketSessionRevocationManager.invalidateSessionsForJti(attrJti);
-                        }
+                        webSocketSessionRevocationManager.invalidateSessionsForJti(attrJti);
                         throw new AccessDeniedException("Access denied: Token has been revoked");
                     }
+                } catch (AccessDeniedException ex) {
+                    throw ex;
                 } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException | com.restaurant.restaurantpos.exception.RevocationStorageException ex) {
+                    throw new org.springframework.messaging.MessageDeliveryException("Service temporarily unavailable");
+                } catch (Exception ex) {
                     throw new org.springframework.messaging.MessageDeliveryException("Service temporarily unavailable");
                 }
             }
