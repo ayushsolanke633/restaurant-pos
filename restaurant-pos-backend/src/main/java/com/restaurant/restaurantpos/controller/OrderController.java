@@ -30,12 +30,14 @@ public class OrderController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN','WAITER')")
     public ResponseEntity<OrderResponse> createOrder(@Valid @RequestBody OrderRequest request) {
         OrderResponse response = orderService.createOrder(request);
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN','WAITER','KITCHEN')")
     public ResponseEntity<List<OrderResponse>> getAllOrders(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String orderType) {
@@ -63,6 +65,7 @@ public class OrderController {
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','WAITER')")
     public ResponseEntity<OrderResponse> updateOrder(
             @PathVariable Long id,
             @Valid @RequestBody OrderRequest request) {
@@ -71,6 +74,7 @@ public class OrderController {
     }
 
     @PostMapping("/{id}/items")
+    @PreAuthorize("hasAnyRole('ADMIN','WAITER')")
     public ResponseEntity<OrderResponse> addItemsToOrder(
             @PathVariable Long id,
             @Valid @RequestBody OrderRequest request) {
@@ -79,6 +83,7 @@ public class OrderController {
     }
 
     @PatchMapping("/{id}/accept")
+    @PreAuthorize("hasRole('KITCHEN')")
     public ResponseEntity<OrderResponse> acceptOrder(@PathVariable Long id) {
         OrderResponse response = orderService.acceptOrder(id);
         return ResponseEntity.ok(response);
@@ -104,6 +109,7 @@ public class OrderController {
     }
 
     @PatchMapping("/{id}/cancel")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<OrderResponse> cancelOrder(@PathVariable Long id) {
         OrderResponse response = orderService.cancelOrder(id);
         return ResponseEntity.ok(response);

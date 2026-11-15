@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect, useCallback } from 'react';
 import authService from '../services/authService';
 import { SUPPORTED_ROLES } from '../utils/constants';
+import KitchenWebSocketClient from '../services/websocketService';
 
 export const AuthContext = createContext(null);
 
@@ -13,6 +14,7 @@ export const AuthProvider = ({ children }) => {
   // Logout handler
   const logout = useCallback(async () => {
     try {
+      KitchenWebSocketClient.disconnectAll();
       await authService.logout();
     } finally {
       setUser(null);
@@ -21,7 +23,7 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  // Restore session from localStorage on initial render
+  // Restore session from sessionStorage on initial render
   useEffect(() => {
     const initAuth = () => {
       if (authService.isAuthenticated()) {
@@ -37,15 +39,18 @@ export const AuthProvider = ({ children }) => {
           logout();
         }
       } else {
-        logout();
+        setUser(null);
+        setToken(null);
+        setRole(null);
       }
       setLoading(false);
     };
 
     initAuth();
 
-    // Listen for global 401 unauthorized event from Axios interceptor
+    // Listen for global 401 unauthorized event from Axios interceptor or STOMP client
     const handleUnauthorized = () => {
+      KitchenWebSocketClient.disconnectAll();
       logout();
     };
 

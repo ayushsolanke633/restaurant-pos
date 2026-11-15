@@ -14,20 +14,25 @@ public class MigrationApprovalGate {
     public static final String GATE_AUTHORIZATION_TOKEN = "AUTHORIZED_BY_GATE";
 
     public static final Set<String> APPROVED_ALLOWLIST = Collections.unmodifiableSet(
-            new LinkedHashSet<>(Arrays.asList("1.0.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0"))
+            new LinkedHashSet<>(Arrays.asList("1.0.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0", "1.9.0"))
     );
 
     public static final String ISOLATED_TEST_DB_NAME = "restaurant_pos_migration_test";
+    public static final String VARIATIONS_TEST_DB_NAME = "restaurant_pos_variations_test";
     public static final Set<String> ISOLATED_TEST_ALLOWLIST = Collections.unmodifiableSet(
             new LinkedHashSet<>(Arrays.asList("1.6.0", "1.7.0"))
+    );
+    public static final Set<String> VARIATIONS_TEST_ALLOWLIST = Collections.unmodifiableSet(
+            new LinkedHashSet<>(Arrays.asList("1.9.0"))
     );
 
     /**
      * Verifies if a migration version is authorized for a specific database connection.
      * Returns true if the version is in APPROVED_ALLOWLIST.
-     * Test migrations (1.6.0, 1.7.0) are ONLY permitted when:
+     * Test migrations (1.6.0, 1.7.0, 1.9.0) are ONLY permitted when:
      * 1. The explicit test authorization flag (flyway.test.isolated.approved) is set to "true".
-     * 2. The target database URL strictly points to 'restaurant_pos_migration_test'.
+     * 2. The target database URL strictly points to the designated isolated test database
+     *    ('restaurant_pos_migration_test' or 'restaurant_pos_variations_test').
      * 3. The database URL does NOT point to live 'restaurant_pos' or any restore database.
      */
     public static boolean isVersionApprovedForConnection(String version, String dbUrl) {
@@ -44,6 +49,15 @@ public class MigrationApprovalGate {
 
         if (testAuthFlag && ISOLATED_TEST_ALLOWLIST.contains(version)) {
             if (dbUrl != null && dbUrl.contains(ISOLATED_TEST_DB_NAME) &&
+                !dbUrl.contains("restaurant_pos_restore_test") &&
+                !dbUrl.endsWith("/restaurant_pos") &&
+                !dbUrl.contains("/restaurant_pos?")) {
+                return true;
+            }
+        }
+
+        if (testAuthFlag && VARIATIONS_TEST_ALLOWLIST.contains(version)) {
+            if (dbUrl != null && dbUrl.contains(VARIATIONS_TEST_DB_NAME) &&
                 !dbUrl.contains("restaurant_pos_restore_test") &&
                 !dbUrl.endsWith("/restaurant_pos") &&
                 !dbUrl.contains("/restaurant_pos?")) {

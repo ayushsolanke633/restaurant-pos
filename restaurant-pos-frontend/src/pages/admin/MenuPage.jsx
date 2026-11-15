@@ -326,13 +326,32 @@ export const MenuPage = () => {
               <tbody>
                 {filteredMenuItems.map((item) => (
                   <tr key={item.id} className={!item.isAvailable ? 'row-inactive' : ''}>
-                    <td className="font-weight-bold">{item.name}</td>
+                    <td>
+                      <div className="font-weight-bold">{item.name}</div>
+                      {Array.isArray(item.variations) && item.variations.length > 0 && (
+                        <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.15rem' }}>
+                          <span className="badge badge-info" style={{ fontSize: '0.7rem' }}>
+                            {item.variations.length} variations
+                          </span>
+                          {' '}({item.variations.map((v) => v.name).join(', ')})
+                        </div>
+                      )}
+                    </td>
                     <td>
                       <span className="badge badge-category">
                         {item.categoryName || 'Uncategorized'}
                       </span>
                     </td>
-                    <td className="font-price">{formatCurrency(item.price)}</td>
+                    <td className="font-price">
+                      {Array.isArray(item.variations) && item.variations.length > 0 ? (
+                        <span>
+                          <small className="text-muted" style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>From </small>
+                          {formatCurrency(item.price)}
+                        </span>
+                      ) : (
+                        formatCurrency(item.price)
+                      )}
+                    </td>
                     <td className="text-muted text-truncate">
                       {item.description || '—'}
                     </td>

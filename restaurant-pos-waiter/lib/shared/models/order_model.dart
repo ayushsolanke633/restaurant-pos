@@ -1,6 +1,8 @@
 class OrderItemModel {
   final int? id;
   final int menuItemId;
+  final int? variationId;
+  final String? variationName;
   final String menuItemName;
   final int quantity;
   final double unitPrice;
@@ -10,12 +12,18 @@ class OrderItemModel {
   OrderItemModel({
     this.id,
     required this.menuItemId,
+    this.variationId,
+    this.variationName,
     required this.menuItemName,
     required this.quantity,
     required this.unitPrice,
     this.notes,
     required this.subtotal,
   });
+
+  String get displayName => variationName != null && variationName!.isNotEmpty
+      ? '$menuItemName ($variationName)'
+      : menuItemName;
 
   factory OrderItemModel.fromJson(Map<String, dynamic> json) {
     return OrderItemModel(
@@ -25,6 +33,10 @@ class OrderItemModel {
       menuItemId: json['menuItemId'] is int
           ? json['menuItemId']
           : int.parse((json['menuItemId'] ?? 0).toString()),
+      variationId: json['variationId'] != null
+          ? (json['variationId'] is int ? json['variationId'] : int.parse(json['variationId'].toString()))
+          : null,
+      variationName: json['variationName'] as String?,
       menuItemName: json['menuItemName'] as String? ?? 'Item',
       quantity: json['quantity'] is int
           ? json['quantity']
@@ -43,6 +55,8 @@ class OrderItemModel {
     return {
       'id': id,
       'menuItemId': menuItemId,
+      'variationId': variationId,
+      'variationName': variationName,
       'menuItemName': menuItemName,
       'quantity': quantity,
       'unitPrice': unitPrice,

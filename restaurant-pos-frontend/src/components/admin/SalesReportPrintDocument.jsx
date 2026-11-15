@@ -1,0 +1,457 @@
+import React from 'react';
+import { CURRENCY_SYMBOL } from '../../utils/constants';
+
+/**
+ * Clean, printer-friendly Sales Report Document for standard A4 paper.
+ * Designed to render beautifully on paper, in PDF exports, and in high-contrast black & white.
+ */
+export const SalesReportPrintDocument = ({
+  restaurantName = 'AnnaDhara Restaurant',
+  restaurantSettings = null,
+  user = null,
+  fromDate,
+  toDate,
+  salesReport,
+  paymentsReport = [],
+  orderTypesReport = [],
+  statusReport = null,
+  topItemsReport = [],
+  categorySalesReport = [],
+  dailySalesBreakdown = [],
+  reportType = 'ALL', // 'ALL', 'SUMMARY', 'PAYMENTS', 'ITEMS_CATEGORIES', 'ORDER_TYPES', 'DAILY'
+  currencySymbol = CURRENCY_SYMBOL,
+}) => {
+  const formatCurrency = (val) => `${currencySymbol}${Number(val || 0).toFixed(2)}`;
+
+  const formatDateLabel = (isoString) => {
+    if (!isoString) return '—';
+    try {
+      const parts = isoString.split('T')[0].split('-').map(Number);
+      if (parts.length === 3 && !parts.some(isNaN)) {
+        const [y, m, d] = parts;
+        const date = new Date(y, m - 1, d);
+        return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      }
+      return isoString;
+    } catch {
+      return isoString;
+    }
+  };
+
+  const isMultiDay = fromDate !== toDate;
+  const isPeriodEmpty =
+    !salesReport ||
+    ((salesReport.totalOrders === 0 || salesReport.totalOrders == null) &&
+      (salesReport.ordersSettled === 0 || salesReport.ordersSettled == null) &&
+      Number(salesReport.totalRevenue || 0) === 0);
+
+  const totalRevenueNum = Number(salesReport?.totalRevenue || 0);
+
+  // Derived payment channel data
+  const paymentMethodsList = [
+    { key: 'CASH', label: 'Cash' },
+    { key: 'UPI', label: 'UPI' },
+    { key: 'CARD', label: 'Credit / Debit Card' },
+  ];
+
+  const paymentBreakdownRows = paymentMethodsList.map((pm) => {
+    const item = (paymentsReport || []).find(
+      (p) => (p.paymentMethod || '').toUpperCase() === pm.key
+    );
+    const amount = item ? Number(item.amount || 0) : 0;
+    const count = item ? Number(item.transactionCount || 0) : 0;
+    const share = totalRevenueNum > 0 ? ((amount / totalRevenueNum) * 100).toFixed(1) : '0.0';
+    return {
+      label: pm.label,
+      count,
+      amount,
+      share,
+    };
+  });
+
+  const totalPaymentTxns = paymentBreakdownRows.reduce((acc, r) => acc + r.count, 0);
+  const totalPaymentAmount = paymentBreakdownRows.reduce((acc, r) => acc + r.amount, 0);
+
+  // Report Title based on filter
+  let reportTitle = 'COMPREHENSIVE SALES & PERFORMANCE REPORT';
+  if (reportType === 'SUMMARY') reportTitle = 'EXECUTIVE FINANCIAL & PAYMENTS SUMMARY';
+  else if (reportType === 'PAYMENTS') reportTitle = 'PAYMENT CHANNELS & SETTLEMENTS REPORT';
+  else if (reportType === 'ITEMS_CATEGORIES') reportTitle = 'MENU ITEMS & CATEGORY PERFORMANCE REPORT';
+  else if (reportType === 'ORDER_TYPES') reportTitle = 'ORDER TYPES & WORKFLOW PIPELINE REPORT';
+  else if (reportType === 'DAILY') reportTitle = 'DAILY SALES HISTORY & TRENDS REPORT';
+
+  const generatedDateStr = new Date().toLocaleString('en-IN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+
+  return (
+    <div className="sales-report-print-document">
+      {/* ----------------------------------------------------
+          1. REPORT HEADER & RESTAURANT METADATA
+          ---------------------------------------------------- */}
+      <div className="report-print-header">
+        <div className="header-brand">
+          <h1 className="restaurant-brand-name">{restaurantSettings?.restaurantName || restaurantName}</h1>
+          {restaurantSettings?.address && (
+            <p className="restaurant-address">{restaurantSettings.address}</p>
+          )}
+          <div className="restaurant-contact-row">
+            {restaurantSettings?.phone && <span>Phone: {restaurantSettings.phone}</span>}
+            {restaurantSettings?.gstNumber && <span>GSTIN: {restaurantSettings.gstNumber}</span>}
+            {restaurantSettings?.email && <span>Email: {restaurantSettings.email}</span>}
+          </div>
+        </div>
+
+        <div className="report-title-banner">
+          <h2 className="report-main-title">{reportTitle}</h2>
+          <div className="report-meta-grid">
+            <div className="meta-cell">
+              <span className="meta-cell-label">Reporting Period:</span>
+              <span className="meta-cell-value">
+                {isMultiDay
+                  ? `${formatDateLabel(fromDate)} to ${formatDateLabel(toDate)}`
+                  : `${formatDateLabel(fromDate)} (Single Day)`}
+              </span>
+            </div>
+            <div className="meta-cell">
+              <span className="meta-cell-label">Generated On:</span>
+              <span className="meta-cell-value">{generatedDateStr}</span>
+            </div>
+            <div className="meta-cell">
+              <span className="meta-cell-label">Generated By:</span>
+              <span className="meta-cell-value">{user?.name ? `${user.name} (Admin)` : 'Administrator'}</span>
+            </div>
+            <div className="meta-cell">
+              <span className="meta-cell-label">Scope:</span>
+              <span className="meta-cell-value">
+                {reportType === 'ALL' ? 'Full Report' : reportTitle}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ----------------------------------------------------
+          EMPTY STATE (IF NO SALES / ORDERS IN PERIOD)
+          ---------------------------------------------------- */}
+      {isPeriodEmpty ? (
+        <div className="report-empty-notice">
+          <p className="empty-title">ℹ️ No Sales Transactions Recorded</p>
+          <p className="empty-desc">
+            No completed orders or settled payments were recorded for the selected period (
+            {formatDateLabel(fromDate)} to {formatDateLabel(toDate)}).
+          </p>
+        </div>
+      ) : null}
+
+      {/* ----------------------------------------------------
+          2. SECTION A: EXECUTIVE FINANCIAL SUMMARY
+          ---------------------------------------------------- */}
+      {(reportType === 'ALL' || reportType === 'SUMMARY' || reportType === 'DAILY') && (
+        <div className="report-section-block">
+          <h3 className="report-section-heading">1. Executive Financial Summary</h3>
+          <table className="report-table report-summary-table">
+            <thead>
+              <tr>
+                <th style={{ width: '40%' }}>Financial Metric</th>
+                <th style={{ width: '25%', textAlign: 'right' }}>Amount / Count</th>
+                <th style={{ width: '35%' }}>Operational Context</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="font-bold">Total Net Revenue</td>
+                <td className="font-bold text-right font-numeric">
+                  {formatCurrency(salesReport?.totalRevenue)}
+                </td>
+                <td className="text-muted">Settled order revenue (completed payments)</td>
+              </tr>
+              <tr>
+                <td>Orders Settled</td>
+                <td className="text-right font-numeric">
+                  {salesReport?.ordersSettled != null
+                    ? salesReport.ordersSettled
+                    : salesReport?.completedOrders || 0}
+                </td>
+                <td className="text-muted">Paid & completed orders during period</td>
+              </tr>
+              <tr>
+                <td>Total Orders Created</td>
+                <td className="text-right font-numeric">{salesReport?.totalOrders || 0}</td>
+                <td className="text-muted">Total orders initiated during period</td>
+              </tr>
+              <tr>
+                <td>Bills Generated</td>
+                <td className="text-right font-numeric">{salesReport?.billsGenerated || 0}</td>
+                <td className="text-muted">Invoices / receipts finalized</td>
+              </tr>
+              <tr>
+                <td>Average Order Value (AOV)</td>
+                <td className="text-right font-numeric">
+                  {formatCurrency(salesReport?.averageOrderValue)}
+                </td>
+                <td className="text-muted">Revenue per settled order</td>
+              </tr>
+              <tr>
+                <td>Total Tax Collected</td>
+                <td className="text-right font-numeric">
+                  {formatCurrency(salesReport?.totalTax)}
+                </td>
+                <td className="text-muted">
+                  CGST: {formatCurrency(salesReport?.totalCgst)} | SGST:{' '}
+                  {formatCurrency(salesReport?.totalSgst)}
+                </td>
+              </tr>
+              <tr>
+                <td>Total Discounts Allowed</td>
+                <td className="text-right font-numeric">
+                  {formatCurrency(salesReport?.totalDiscount)}
+                </td>
+                <td className="text-muted">Discounts applied at billing</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ----------------------------------------------------
+          3. SECTION B: PAYMENT CHANNELS BREAKDOWN
+          ---------------------------------------------------- */}
+      {(reportType === 'ALL' || reportType === 'SUMMARY' || reportType === 'PAYMENTS') && (
+        <div className="report-section-block">
+          <h3 className="report-section-heading">2. Payment Channel Breakdown</h3>
+          <table className="report-table">
+            <thead>
+              <tr>
+                <th>Payment Channel</th>
+                <th style={{ textAlign: 'right' }}>Transaction Count</th>
+                <th style={{ textAlign: 'right' }}>Total Amount</th>
+                <th style={{ textAlign: 'right' }}>Share of Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paymentBreakdownRows.map((row) => (
+                <tr key={row.label}>
+                  <td className="font-semibold">{row.label}</td>
+                  <td className="text-right font-numeric">{row.count} txns</td>
+                  <td className="text-right font-numeric">{formatCurrency(row.amount)}</td>
+                  <td className="text-right font-numeric">{row.share}%</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="table-total-row">
+                <td className="font-bold">Total Settled Collections</td>
+                <td className="text-right font-bold font-numeric">{totalPaymentTxns} txns</td>
+                <td className="text-right font-bold font-numeric">{formatCurrency(totalPaymentAmount)}</td>
+                <td className="text-right font-bold font-numeric">100.0%</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      {/* ----------------------------------------------------
+          4. SECTION C: ORDER TYPES & WORKFLOW PIPELINE
+          ---------------------------------------------------- */}
+      {(reportType === 'ALL' || reportType === 'ORDER_TYPES') && (
+        <div className="report-section-block">
+          <h3 className="report-section-heading">3. Order Type & Status Breakdown</h3>
+          <table className="report-table">
+            <thead>
+              <tr>
+                <th>Order Channel</th>
+                <th style={{ textAlign: 'right' }}>Total Orders</th>
+                <th style={{ textAlign: 'right' }}>Completed</th>
+                <th style={{ textAlign: 'right' }}>Cancelled</th>
+                <th style={{ textAlign: 'right' }}>Revenue</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orderTypesReport.length === 0 ? (
+                <tr>
+                  <td colSpan="5" className="text-center text-muted">
+                    No order type data available for this period.
+                  </td>
+                </tr>
+              ) : (
+                orderTypesReport.map((t) => (
+                  <tr key={t.orderType}>
+                    <td className="font-semibold">
+                      {t.orderType === 'DINE_IN' ? 'Dine-In' : 'Takeaway'}
+                    </td>
+                    <td className="text-right font-numeric">{t.orderCount}</td>
+                    <td className="text-right font-numeric">{t.completedCount}</td>
+                    <td className="text-right font-numeric">{t.cancelledCount}</td>
+                    <td className="text-right font-bold font-numeric">{formatCurrency(t.revenue)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+
+          {statusReport && (
+            <div className="status-pipeline-box">
+              <span className="pipeline-title">Order Status Pipeline Summary:</span>
+              <div className="pipeline-chips-row">
+                <span className="pipeline-chip">New: <strong>{statusReport.newOrders || 0}</strong></span>
+                <span className="pipeline-chip">Accepted: <strong>{statusReport.acceptedOrders || 0}</strong></span>
+                <span className="pipeline-chip">Preparing: <strong>{statusReport.preparingOrders || 0}</strong></span>
+                <span className="pipeline-chip">Ready: <strong>{statusReport.readyOrders || 0}</strong></span>
+                <span className="pipeline-chip">Completed: <strong>{statusReport.completedOrders || 0}</strong></span>
+                <span className="pipeline-chip">Cancelled: <strong>{statusReport.cancelledOrders || 0}</strong></span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ----------------------------------------------------
+          5. SECTION D: TOP 10 SELLING MENU ITEMS
+          ---------------------------------------------------- */}
+      {(reportType === 'ALL' || reportType === 'ITEMS_CATEGORIES') && (
+        <div className="report-section-block">
+          <h3 className="report-section-heading">4. Top Selling Menu Items</h3>
+          {topItemsReport.length === 0 ? (
+            <p className="text-muted">No item sales recorded for this period.</p>
+          ) : (
+            <table className="report-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '8%' }}>#</th>
+                  <th style={{ width: '48%' }}>Item Name</th>
+                  <th style={{ width: '22%', textAlign: 'right' }}>Quantity Sold</th>
+                  <th style={{ width: '22%', textAlign: 'right' }}>Total Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topItemsReport.map((item, idx) => (
+                  <tr key={item.menuItemId || idx}>
+                    <td className="text-muted font-bold font-numeric">{idx + 1}</td>
+                    <td className="font-semibold">{item.menuItemName}</td>
+                    <td className="text-right font-numeric">{item.quantitySold}</td>
+                    <td className="text-right font-bold font-numeric">{formatCurrency(item.revenue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ----------------------------------------------------
+          6. SECTION E: CATEGORY SALES PERFORMANCE
+          ---------------------------------------------------- */}
+      {(reportType === 'ALL' || reportType === 'ITEMS_CATEGORIES') && (
+        <div className="report-section-block">
+          <h3 className="report-section-heading">5. Category Sales Breakdown</h3>
+          {categorySalesReport.length === 0 ? (
+            <p className="text-muted">No category sales recorded for this period.</p>
+          ) : (
+            <table className="report-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '50%' }}>Category Name</th>
+                  <th style={{ width: '25%', textAlign: 'right' }}>Quantity Sold</th>
+                  <th style={{ width: '25%', textAlign: 'right' }}>Total Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {categorySalesReport.map((cat, idx) => (
+                  <tr key={cat.categoryId || idx}>
+                    <td className="font-semibold">{cat.categoryName}</td>
+                    <td className="text-right font-numeric">{cat.quantitySold}</td>
+                    <td className="text-right font-bold font-numeric">{formatCurrency(cat.revenue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ----------------------------------------------------
+          7. SECTION F: DAILY SALES BREAKDOWN (IF MULTI-DAY)
+          ---------------------------------------------------- */}
+      {isMultiDay && (reportType === 'ALL' || reportType === 'DAILY') && (
+        <div className="report-section-block">
+          <h3 className="report-section-heading">6. Daily Sales Breakdown</h3>
+          {dailySalesBreakdown.length === 0 ? (
+            <p className="text-muted">No daily breakdown data found for selected range.</p>
+          ) : (
+            <table className="report-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th style={{ textAlign: 'right' }}>Created</th>
+                  <th style={{ textAlign: 'right' }}>Settled</th>
+                  <th style={{ textAlign: 'right' }}>Completed</th>
+                  <th style={{ textAlign: 'right' }}>Cancelled</th>
+                  <th style={{ textAlign: 'right' }}>Revenue</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dailySalesBreakdown.map((row, idx) => (
+                  <tr key={idx}>
+                    <td className="font-semibold">{formatDateLabel(row.date)}</td>
+                    <td className="text-right font-numeric">{row.orders}</td>
+                    <td className="text-right font-numeric font-semibold">
+                      {row.ordersSettled != null ? row.ordersSettled : row.completedOrders || 0}
+                    </td>
+                    <td className="text-right font-numeric">{row.completedOrders}</td>
+                    <td className="text-right font-numeric">{row.cancelledOrders}</td>
+                    <td className="text-right font-bold font-numeric">{formatCurrency(row.revenue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="table-total-row">
+                  <td className="font-bold">Total ({dailySalesBreakdown.length} Days)</td>
+                  <td className="text-right font-bold font-numeric">
+                    {dailySalesBreakdown.reduce((acc, r) => acc + (r.orders || 0), 0)}
+                  </td>
+                  <td className="text-right font-bold font-numeric">
+                    {dailySalesBreakdown.reduce(
+                      (acc, r) =>
+                        acc +
+                        (r.ordersSettled != null
+                          ? r.ordersSettled
+                          : r.completedOrders || 0),
+                      0
+                    )}
+                  </td>
+                  <td className="text-right font-bold font-numeric">
+                    {dailySalesBreakdown.reduce((acc, r) => acc + (r.completedOrders || 0), 0)}
+                  </td>
+                  <td className="text-right font-bold font-numeric">
+                    {dailySalesBreakdown.reduce((acc, r) => acc + (r.cancelledOrders || 0), 0)}
+                  </td>
+                  <td className="text-right font-bold font-numeric">
+                    {formatCurrency(
+                      dailySalesBreakdown.reduce((acc, r) => acc + Number(r.revenue || 0), 0)
+                    )}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ----------------------------------------------------
+          8. REPORT FOOTER
+          ---------------------------------------------------- */}
+      <div className="report-print-footer">
+        <div className="footer-rule"></div>
+        <div className="footer-details">
+          <span>AnnaDhara Restaurant POS — Official Sales Report</span>
+          <span>Printed on {generatedDateStr}</span>
+          <span>Confidential — Internal Management Records</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default SalesReportPrintDocument;

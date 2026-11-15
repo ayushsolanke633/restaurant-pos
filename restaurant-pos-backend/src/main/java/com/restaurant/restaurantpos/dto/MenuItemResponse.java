@@ -8,6 +8,7 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Getter
 @Setter
@@ -25,6 +26,7 @@ public class MenuItemResponse {
     private String description;
     private BigDecimal price;
     private Boolean isAvailable;
+    private List<MenuItemVariationResponse> variations;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

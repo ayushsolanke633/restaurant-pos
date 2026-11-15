@@ -490,7 +490,7 @@ public class TableOwnershipConcurrencyTest {
     @DisplayName("11. Cancelling order releases table to AVAILABLE")
     void testCancelOrderReleasesTable() {
         when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
-        when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
+        when(securityUtils.getCurrentUserRole()).thenReturn("ADMIN");
         when(securityUtils.getCurrentUserId()).thenReturn(101L);
 
         table1.setStatus("OCCUPIED");

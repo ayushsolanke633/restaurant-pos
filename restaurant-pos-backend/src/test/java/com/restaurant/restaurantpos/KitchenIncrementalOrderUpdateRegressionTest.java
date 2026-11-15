@@ -485,15 +485,22 @@ public class KitchenIncrementalOrderUpdateRegressionTest {
                 orderService.addItemsToOrder(110L, crossTenantReq)
         );
 
-        // Cancellation check: Waiter cannot cancel an order once any item has progressed past NEW
+        // Cancellation check: Waiter cannot cancel an order (ADMIN-only cancellation)
         when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
         when(securityUtils.getCurrentUserId()).thenReturn(100L);
         when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
 
-        OrderWorkflowConflictException cancelEx = assertThrows(OrderWorkflowConflictException.class, () ->
+        AccessDeniedException cancelEx = assertThrows(AccessDeniedException.class, () ->
                 orderService.cancelOrder(110L)
         );
-        assertTrue(cancelEx.getMessage().contains("Order cannot be cancelled after kitchen acceptance"));
+        assertTrue(cancelEx.getMessage().contains("Only ADMIN can cancel orders"));
+
+        // Admin cannot cancel an order in PREPARING status
+        when(securityUtils.getCurrentUserRole()).thenReturn("ADMIN");
+        OrderWorkflowConflictException adminCancelEx = assertThrows(OrderWorkflowConflictException.class, () ->
+                orderService.cancelOrder(110L)
+        );
+        assertTrue(adminCancelEx.getMessage().contains("Invalid cancellation status"));
     }
 
     // 11. Adding items to a READY order resets order status to PREPARING

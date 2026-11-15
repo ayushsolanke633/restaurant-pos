@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { API_BASE_URL, STORAGE_KEYS } from '../utils/constants';
+import { API_BASE_URL, API_ENDPOINTS, STORAGE_KEYS } from '../utils/constants';
 
 // Centralized Axios Instance
 const api = axios.create({
@@ -29,14 +29,22 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      // Clear session storage on 401 Unauthorized
-      sessionStorage.removeItem(STORAGE_KEYS.TOKEN);
-      sessionStorage.removeItem(STORAGE_KEYS.USER);
-      localStorage.removeItem(STORAGE_KEYS.TOKEN);
-      localStorage.removeItem(STORAGE_KEYS.USER);
-      
-      // Dispatch custom event for AuthContext listener
-      window.dispatchEvent(new Event('auth:unauthorized'));
+      const requestUrl = error.config?.url || '';
+      const isLoginRequest = requestUrl.includes(API_ENDPOINTS.LOGIN);
+      const isLogoutRequest = requestUrl.includes(API_ENDPOINTS.LOGOUT);
+
+      // Always clear session tokens on 401 (unless it's an initial login attempt)
+      if (!isLoginRequest) {
+        sessionStorage.removeItem(STORAGE_KEYS.TOKEN);
+        sessionStorage.removeItem(STORAGE_KEYS.USER);
+        localStorage.removeItem(STORAGE_KEYS.TOKEN);
+        localStorage.removeItem(STORAGE_KEYS.USER);
+      }
+
+      // Dispatch auth:unauthorized only for authenticated session failures (not login or logout attempts)
+      if (!isLoginRequest && !isLogoutRequest) {
+        window.dispatchEvent(new Event('auth:unauthorized'));
+      }
     }
     // Note: 403 Forbidden is NOT treated as expired session; pass error through
     return Promise.reject(error);

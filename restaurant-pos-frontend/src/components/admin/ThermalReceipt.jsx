@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import settingsService from '../../services/settingsService';
+import billingService from '../../services/billingService';
 import { CURRENCY_SYMBOL } from '../../utils/constants';
 
-export const ThermalReceipt = ({ bill, order, settings: propSettings, paperWidth = '80mm' }) => {
+export const ThermalReceipt = ({ bill, order, payment: propPayment, settings: propSettings, paperWidth = '80mm' }) => {
   const [settings, setSettings] = useState(propSettings || null);
+  const [fetchedPayment, setFetchedPayment] = useState(null);
 
   useEffect(() => {
     if (!propSettings) {
@@ -14,6 +16,25 @@ export const ThermalReceipt = ({ bill, order, settings: propSettings, paperWidth
       setSettings(propSettings);
     }
   }, [propSettings]);
+
+  // Load payment details if not provided as prop and bill is completed/paid
+  useEffect(() => {
+    if (propPayment) {
+      setFetchedPayment(propPayment);
+      return;
+    }
+    const billId = bill?.id || bill?.billId;
+    const isCompleted = order?.status === 'COMPLETED' || bill?.paymentStatus === 'PAID';
+    if (billId && !bill?.paymentMethod && isCompleted) {
+      billingService.getPaymentsByBillId(billId)
+        .then((payments) => {
+          if (Array.isArray(payments) && payments.length > 0) {
+            setFetchedPayment(payments[0]);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [bill?.id, bill?.billId, bill?.paymentMethod, bill?.paymentStatus, order?.status, propPayment]);
 
   if (!bill && !order) return null;
 
@@ -46,15 +67,21 @@ export const ThermalReceipt = ({ bill, order, settings: propSettings, paperWidth
   const totalAmount = Number(bill?.totalAmount ?? order?.totalAmount ?? subtotal + taxAmount - discountAmount);
 
   const gstMode = bill?.gstMode ?? order?.gstMode ?? null;
+  const isGstBill = Boolean(gstMode && (gstMode === 'GST_EXCLUDED' || gstMode === 'GST_INCLUDED'));
   const cgstRate = bill?.cgstRate != null ? Number(bill.cgstRate) : (order?.cgstRate != null ? Number(order.cgstRate) : null);
   const sgstRate = bill?.sgstRate != null ? Number(bill.sgstRate) : (order?.sgstRate != null ? Number(order.sgstRate) : null);
-  const cgstAmount = Number(bill?.cgstAmount ?? order?.cgstAmount ?? 0);
-  const sgstAmount = Number(bill?.sgstAmount ?? order?.sgstAmount ?? 0);
+  const cgstAmount = bill?.cgstAmount != null ? Number(bill.cgstAmount) : (order?.cgstAmount != null ? Number(order.cgstAmount) : null);
+  const sgstAmount = bill?.sgstAmount != null ? Number(bill.sgstAmount) : (order?.sgstAmount != null ? Number(order.sgstAmount) : null);
 
-  const isGstBill = Boolean(gstMode);
   const taxableAmount = gstMode === 'GST_INCLUDED'
     ? Math.max(0, totalAmount - taxAmount)
     : Math.max(0, subtotal - discountAmount);
+
+  // Derive payment details
+  const effectivePayment = propPayment || fetchedPayment || (bill?.payments && bill.payments[0]) || null;
+  const paymentMethod = effectivePayment?.paymentMethod || bill?.paymentMethod || order?.paymentMethod || null;
+  const transactionRef = effectivePayment?.transactionReference || bill?.transactionReference || order?.transactionReference || null;
+  const paidAt = effectivePayment?.paidAt || bill?.paidAt || order?.paidAt || null;
 
   const restaurantName = settings?.restaurantName || 'AnnaDhara';
   const address = settings?.address || '';
@@ -116,6 +143,14 @@ export const ThermalReceipt = ({ bill, order, settings: propSettings, paperWidth
               <span className="val">{waiterName}</span>
             </div>
           )}
+          {isGstBill && (
+            <div className="meta-row">
+              <span className="lbl">GST Mode:</span>
+              <span className="val font-bold">
+                {gstMode === 'GST_INCLUDED' ? 'GST Included' : 'GST Excluded'}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="thermal-divider-single"></div>
@@ -135,7 +170,9 @@ export const ThermalReceipt = ({ bill, order, settings: propSettings, paperWidth
               items.map((item, idx) => (
                 <tr key={idx}>
                   <td className="td-item">
-                    <div className="item-name font-bold">{item.menuItemName || `Item #${item.menuItemId}`}</div>
+                    <div className="item-name font-bold">
+                      {item.menuItemName || `Item #${item.menuItemId}`}{item.variationName ? ` (${item.variationName})` : ''}
+                    </div>
                     {item.notes && <div className="item-note">Note: {item.notes}</div>}
                   </td>
                   <td className="td-qty text-center">{item.quantity}</td>
@@ -170,17 +207,25 @@ export const ThermalReceipt = ({ bill, order, settings: propSettings, paperWidth
           {isGstBill ? (
             <>
               <div className="total-row">
+                <span>GST Mode:</span>
+                <span className="font-bold">{gstMode === 'GST_INCLUDED' ? 'GST Included' : 'GST Excluded'}</span>
+              </div>
+              <div className="total-row">
                 <span>Taxable Amount:</span>
                 <span>{CURRENCY_SYMBOL}{taxableAmount.toFixed(2)}</span>
               </div>
-              <div className="total-row">
-                <span>CGST {cgstRate != null ? `(${cgstRate}%)` : ''}:</span>
-                <span>{CURRENCY_SYMBOL}{cgstAmount.toFixed(2)}</span>
-              </div>
-              <div className="total-row">
-                <span>SGST {sgstRate != null ? `(${sgstRate}%)` : ''}:</span>
-                <span>{CURRENCY_SYMBOL}{sgstAmount.toFixed(2)}</span>
-              </div>
+              {cgstAmount != null && (
+                <div className="total-row">
+                  <span>CGST {cgstRate != null ? `(${cgstRate}%)` : ''}:</span>
+                  <span>{CURRENCY_SYMBOL}{cgstAmount.toFixed(2)}</span>
+                </div>
+              )}
+              {sgstAmount != null && (
+                <div className="total-row">
+                  <span>SGST {sgstRate != null ? `(${sgstRate}%)` : ''}:</span>
+                  <span>{CURRENCY_SYMBOL}{sgstAmount.toFixed(2)}</span>
+                </div>
+              )}
             </>
           ) : (
             taxAmount > 0 && (
@@ -195,6 +240,29 @@ export const ThermalReceipt = ({ bill, order, settings: propSettings, paperWidth
             <span>GRAND TOTAL:</span>
             <span>{CURRENCY_SYMBOL}{totalAmount.toFixed(2)}</span>
           </div>
+
+          {/* Payment Details on Printable Receipt */}
+          {paymentMethod && (
+            <>
+              <div className="thermal-divider-single"></div>
+              <div className="total-row font-bold">
+                <span>Payment Mode:</span>
+                <span>{String(paymentMethod).toUpperCase()}</span>
+              </div>
+              {transactionRef && (
+                <div className="total-row font-mono" style={{ fontSize: '0.85em' }}>
+                  <span>Ref / Txn ID:</span>
+                  <span>{transactionRef}</span>
+                </div>
+              )}
+              {paidAt && (
+                <div className="total-row font-mono" style={{ fontSize: '0.8em' }}>
+                  <span>Paid At:</span>
+                  <span>{new Date(paidAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         <div className="thermal-divider-double"></div>

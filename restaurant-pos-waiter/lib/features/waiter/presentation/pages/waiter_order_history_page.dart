@@ -524,7 +524,7 @@ class HistoricalOrderDetailSheet extends StatelessWidget {
                             children: [
                               Expanded(
                                 child: Text(
-                                  item.menuItemName,
+                                  item.displayName,
                                   style: const TextStyle(fontWeight: FontWeight.w600),
                                 ),
                               ),

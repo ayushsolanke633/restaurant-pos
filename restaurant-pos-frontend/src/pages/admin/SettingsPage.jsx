@@ -32,6 +32,9 @@ export const SettingsPage = () => {
   const [formData, setFormData] = useState({
     taxEnabled: true,
     defaultTaxRate: '0.00',
+    gstMode: 'GST_EXCLUDED',
+    cgstRate: '0.00',
+    sgstRate: '0.00',
     serviceChargeEnabled: false,
     defaultServiceChargeRate: '0.00',
     currency: 'INR',
@@ -56,9 +59,20 @@ export const SettingsPage = () => {
 
   const populateForm = (data) => {
     setInitialSettings(data);
+    const defaultTaxRateNum = parseFloat(data.defaultTaxRate) || 0;
+    const defaultTaxRateStr = data.defaultTaxRate !== undefined && data.defaultTaxRate !== null ? String(data.defaultTaxRate) : '0.00';
+    const half = (Math.round(defaultTaxRateNum * 50) / 100).toFixed(2);
+    const remainder = (defaultTaxRateNum - parseFloat(half)).toFixed(2);
+
+    const cgstStr = data.cgstRate !== undefined && data.cgstRate !== null ? String(data.cgstRate) : half;
+    const sgstStr = data.sgstRate !== undefined && data.sgstRate !== null ? String(data.sgstRate) : remainder;
+
     setFormData({
       taxEnabled: data.taxEnabled ?? true,
-      defaultTaxRate: data.defaultTaxRate !== undefined && data.defaultTaxRate !== null ? String(data.defaultTaxRate) : '0.00',
+      defaultTaxRate: defaultTaxRateStr,
+      gstMode: data.gstMode || 'GST_EXCLUDED',
+      cgstRate: cgstStr,
+      sgstRate: sgstStr,
       serviceChargeEnabled: data.serviceChargeEnabled ?? false,
       defaultServiceChargeRate: data.defaultServiceChargeRate !== undefined && data.defaultServiceChargeRate !== null ? String(data.defaultServiceChargeRate) : '0.00',
       currency: data.currency || 'INR',
@@ -101,10 +115,31 @@ export const SettingsPage = () => {
       return;
     }
 
-    setFormData((prev) => ({
-      ...prev,
-      [name]: val,
-    }));
+    if (name === 'defaultTaxRate') {
+      const parsedRate = parseFloat(val);
+      if (!isNaN(parsedRate) && parsedRate >= 0) {
+        const half = (Math.round(parsedRate * 50) / 100).toFixed(2);
+        const remainder = (parsedRate - parseFloat(half)).toFixed(2);
+        setFormData((prev) => ({
+          ...prev,
+          defaultTaxRate: val,
+          cgstRate: half,
+          sgstRate: remainder,
+        }));
+      } else {
+        setFormData((prev) => ({
+          ...prev,
+          defaultTaxRate: val,
+          cgstRate: '0.00',
+          sgstRate: '0.00',
+        }));
+      }
+    } else {
+      setFormData((prev) => ({
+        ...prev,
+        [name]: val,
+      }));
+    }
 
     if (validationErrors[name]) {
       setValidationErrors((prev) => ({ ...prev, [name]: null }));
@@ -188,11 +223,24 @@ export const SettingsPage = () => {
   const validateForm = () => {
     const errors = {};
 
-    // Tax Rate validation
+    // Tax & GST Rate validation
     if (formData.taxEnabled) {
       const taxRateNum = parseFloat(formData.defaultTaxRate);
       if (isNaN(taxRateNum) || taxRateNum < 0 || taxRateNum > 100) {
         errors.defaultTaxRate = 'Tax rate must be between 0.00 and 100.00';
+      } else {
+        const cgstNum = parseFloat(formData.cgstRate);
+        const sgstNum = parseFloat(formData.sgstRate);
+        if (!isNaN(cgstNum) && !isNaN(sgstNum)) {
+          const componentSum = parseFloat((cgstNum + sgstNum).toFixed(2));
+          const normalizedTotal = parseFloat(taxRateNum.toFixed(2));
+          if (Math.abs(componentSum - normalizedTotal) > 0.01) {
+            errors.defaultTaxRate = `CGST (${cgstNum}%) + SGST (${sgstNum}%) must equal total tax rate (${normalizedTotal}%)`;
+          }
+        }
+      }
+      if (!['GST_EXCLUDED', 'GST_INCLUDED'].includes(formData.gstMode)) {
+        errors.gstMode = 'GST mode must be either GST_EXCLUDED or GST_INCLUDED';
       }
     }
 
@@ -257,6 +305,7 @@ export const SettingsPage = () => {
     const payload = {
       taxEnabled: formData.taxEnabled,
       defaultTaxRate: parseFloat(formData.defaultTaxRate) || 0,
+      gstMode: formData.gstMode || 'GST_EXCLUDED',
       serviceChargeEnabled: formData.serviceChargeEnabled,
       defaultServiceChargeRate: parseFloat(formData.defaultServiceChargeRate) || 0,
       currency: formData.currency.trim().toUpperCase(),
@@ -441,25 +490,110 @@ export const SettingsPage = () => {
               </div>
 
               {formData.taxEnabled && (
-                <div className="form-group margin-top-sm">
-                  <label htmlFor="defaultTaxRate">Default Tax Rate (%) *</label>
-                  <input
-                    type="number"
-                    id="defaultTaxRate"
-                    name="defaultTaxRate"
-                    value={formData.defaultTaxRate}
-                    onChange={handleInputChange}
-                    disabled={isSaving}
-                    step="0.01"
-                    min="0"
-                    max="100"
-                    placeholder="0.00"
-                    className={validationErrors.defaultTaxRate ? 'is-invalid' : ''}
-                  />
-                  {validationErrors.defaultTaxRate && (
-                    <span className="error-text">{validationErrors.defaultTaxRate}</span>
-                  )}
-                </div>
+                <>
+                  <div className="form-group margin-top-sm">
+                    <label htmlFor="gstMode">GST Mode *</label>
+                    <select
+                      id="gstMode"
+                      name="gstMode"
+                      value={formData.gstMode}
+                      onChange={handleInputChange}
+                      disabled={isSaving}
+                      className={validationErrors.gstMode ? 'is-invalid' : ''}
+                    >
+                      <option value="GST_EXCLUDED">GST Excluded (Tax added to taxable amount)</option>
+                      <option value="GST_INCLUDED">GST Included (Tax included in menu price)</option>
+                    </select>
+                    <span className="hint-text">Choose whether menu prices include or exclude GST</span>
+                    {validationErrors.gstMode && (
+                      <span className="error-text">{validationErrors.gstMode}</span>
+                    )}
+                  </div>
+
+                  <div className="form-group margin-top-sm">
+                    <label htmlFor="defaultTaxRate">Total GST Rate (%) *</label>
+                    <input
+                      type="number"
+                      id="defaultTaxRate"
+                      name="defaultTaxRate"
+                      value={formData.defaultTaxRate}
+                      onChange={handleInputChange}
+                      disabled={isSaving}
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      placeholder="0.00"
+                      className={validationErrors.defaultTaxRate ? 'is-invalid' : ''}
+                    />
+                    <span className="hint-text">Combined tax rate applied at billing</span>
+                    {validationErrors.defaultTaxRate && (
+                      <span className="error-text">{validationErrors.defaultTaxRate}</span>
+                    )}
+                  </div>
+
+                  {/* Component Breakdown (CGST & SGST 50/50 split) */}
+                  <div className="gst-breakdown-card margin-top-sm" style={{
+                    padding: '0.75rem 1rem',
+                    backgroundColor: 'var(--wn-card-surface, #f8f6f0)',
+                    borderRadius: 'var(--radius-md, 6px)',
+                    border: '1px solid var(--wn-border, #e2ded5)',
+                  }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--wn-text-main, #333)', marginBottom: '0.5rem' }}>
+                      Component Breakdown (Equal 50/50 Split):
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                      <div>
+                        <label htmlFor="cgstRate" style={{ fontSize: '0.75rem', color: 'var(--wn-text-muted, #666)', display: 'block', marginBottom: '0.25rem' }}>
+                          CGST Rate (%)
+                        </label>
+                        <input
+                          type="text"
+                          id="cgstRate"
+                          name="cgstRate"
+                          value={`${formData.cgstRate}%`}
+                          readOnly
+                          disabled
+                          style={{
+                            width: '100%',
+                            padding: '0.4rem 0.6rem',
+                            fontSize: '0.85rem',
+                            backgroundColor: 'rgba(0,0,0,0.03)',
+                            border: '1px solid var(--wn-border, #ccc)',
+                            borderRadius: '4px',
+                            cursor: 'not-allowed',
+                            fontWeight: 600
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="sgstRate" style={{ fontSize: '0.75rem', color: 'var(--wn-text-muted, #666)', display: 'block', marginBottom: '0.25rem' }}>
+                          SGST Rate (%)
+                        </label>
+                        <input
+                          type="text"
+                          id="sgstRate"
+                          name="sgstRate"
+                          value={`${formData.sgstRate}%`}
+                          readOnly
+                          disabled
+                          style={{
+                            width: '100%',
+                            padding: '0.4rem 0.6rem',
+                            fontSize: '0.85rem',
+                            backgroundColor: 'rgba(0,0,0,0.03)',
+                            border: '1px solid var(--wn-border, #ccc)',
+                            borderRadius: '4px',
+                            cursor: 'not-allowed',
+                            fontWeight: 600
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--wn-text-muted, #777)', marginTop: '0.4rem' }}>
+                      CGST ({formData.cgstRate}%) + SGST ({formData.sgstRate}%) = {formData.defaultTaxRate}% Total GST
+                    </div>
+                  </div>
+                </>
               )}
             </div>
 

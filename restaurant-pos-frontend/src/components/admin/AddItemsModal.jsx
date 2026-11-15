@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import AdminModal from './AdminModal';
+import VariationSelectModal from './VariationSelectModal';
 import menuItemService from '../../services/menuItemService';
 import categoryService from '../../services/categoryService';
 import orderService from '../../services/orderService';
@@ -19,12 +20,17 @@ export const AddItemsModal = ({
   const [cartItems, setCartItems] = useState([]);
   const [additionNotes, setAdditionNotes] = useState('');
 
+  // Variation selection dialog state
+  const [selectedMenuItemForVariation, setSelectedMenuItemForVariation] = useState(null);
+
   // Picker filters
   const [menuSearch, setMenuSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+
+  const getCartItemKey = (item) => `${item.menuItemId}_${item.variationId || 'base'}`;
 
   // Load menu items and categories when modal opens
   useEffect(() => {
@@ -68,10 +74,31 @@ export const AddItemsModal = ({
     });
   }, [menuItems, menuSearch, selectedCategory]);
 
-  // Cart operations
-  const handleAddItemToCart = (item) => {
+  // Handling menu item click
+  const handleItemClick = (item) => {
+    const variations = Array.isArray(item.variations) ? item.variations : [];
+    if (variations.length > 1) {
+      // Multiple variations: open variation selection dialog
+      setSelectedMenuItemForVariation(item);
+    } else if (variations.length === 1) {
+      // Exactly 1 variation: auto-select it
+      handleAddItemWithVariation(item, variations[0]);
+    } else {
+      // No variations: add normally with base price
+      handleAddItemWithVariation(item, null);
+    }
+  };
+
+  const handleAddItemWithVariation = (item, variation) => {
+    const variationId = variation ? variation.id : null;
+    const variationName = variation ? variation.name : null;
+    const unitPrice = variation ? Number(variation.price) : Number(item.price || 0);
+
     setCartItems((prev) => {
-      const existingIndex = prev.findIndex((i) => i.menuItemId === item.id);
+      const existingIndex = prev.findIndex(
+        (i) => i.menuItemId === item.id && (i.variationId || null) === (variationId || null)
+      );
+
       if (existingIndex > -1) {
         const updated = [...prev];
         updated[existingIndex].quantity += 1;
@@ -81,8 +108,10 @@ export const AddItemsModal = ({
           ...prev,
           {
             menuItemId: item.id,
+            variationId: variationId || null,
+            variationName: variationName || null,
             name: item.name,
-            unitPrice: Number(item.price || 0),
+            unitPrice,
             quantity: 1,
             notes: '',
           },
@@ -91,11 +120,11 @@ export const AddItemsModal = ({
     });
   };
 
-  const handleUpdateQuantity = (menuItemId, delta) => {
+  const handleUpdateQuantity = (itemKey, delta) => {
     setCartItems((prev) =>
       prev
         .map((i) => {
-          if (i.menuItemId === menuItemId) {
+          if (getCartItemKey(i) === itemKey) {
             const newQty = i.quantity + delta;
             return newQty > 0 ? { ...i, quantity: newQty } : null;
           }
@@ -105,16 +134,16 @@ export const AddItemsModal = ({
     );
   };
 
-  const handleItemNoteChange = (menuItemId, noteText) => {
+  const handleItemNoteChange = (itemKey, noteText) => {
     setCartItems((prev) =>
       prev.map((i) =>
-        i.menuItemId === menuItemId ? { ...i, notes: noteText } : i
+        getCartItemKey(i) === itemKey ? { ...i, notes: noteText } : i
       )
     );
   };
 
-  const handleRemoveItem = (menuItemId) => {
-    setCartItems((prev) => prev.filter((i) => i.menuItemId !== menuItemId));
+  const handleRemoveItem = (itemKey) => {
+    setCartItems((prev) => prev.filter((i) => getCartItemKey(i) !== itemKey));
   };
 
   // Subtotal for additional items
@@ -143,6 +172,7 @@ export const AddItemsModal = ({
       notes: additionNotes.trim() || undefined,
       items: cartItems.map((item) => ({
         menuItemId: item.menuItemId,
+        variationId: item.variationId || null,
         quantity: item.quantity,
         notes: item.notes.trim() || null,
       })),
@@ -167,203 +197,260 @@ export const AddItemsModal = ({
 
   if (!order) return null;
 
-  const tableLabel = order.tableName
-    ? order.tableName
-    : order.tableNumber !== undefined && order.tableNumber !== null
-    ? `Table ${order.tableNumber}`
-    : order.tableId
-    ? `Table ${order.tableId}`
-    : '';
+  const tableLabel = order.tableName || (order.tableNumber ? `Table ${order.tableNumber}` : '');
 
   return (
-    <AdminModal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={`Add Items to Order #${order.id} ${tableLabel ? `(${tableLabel})` : ''}`}
-    >
-      {loadingData ? (
-        <div className="loading-state">
-          <div className="spinner"></div>
-          <p>Loading menu items...</p>
-        </div>
-      ) : (
-        <form onSubmit={handleSubmit} className="admin-form add-items-form" noValidate>
-          {error && (
-            <div className="alert alert-danger" role="alert" style={{ marginBottom: '1rem' }}>
-              <span>{error}</span>
-            </div>
-          )}
-
-          <div className="order-modal-layout">
-            {/* Left side: Menu items picker */}
-            <div className="menu-picker-column">
-              <h4 className="picker-heading">Select Menu Items to Add</h4>
-
-              <div className="picker-controls">
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="Search menu..."
-                  value={menuSearch}
-                  onChange={(e) => setMenuSearch(e.target.value)}
-                />
-                <select
-                  className="form-input form-select"
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
+    <>
+      <AdminModal
+        isOpen={isOpen}
+        onClose={onClose}
+        title={`Add Items to Order #${order.id} ${tableLabel ? `(${tableLabel})` : ''}`}
+      >
+        {loadingData ? (
+          <div className="modal-loading-state">Loading menu items...</div>
+        ) : (
+          <form onSubmit={handleSubmit} className="admin-form add-items-form" noValidate>
+            {error && (
+              <div className="alert alert-danger mb-3" role="alert">
+                <span>{error}</span>
+                <button
+                  type="button"
+                  className="alert-dismiss"
+                  onClick={() => setError('')}
                 >
-                  <option value="">All Categories</option>
-                  {categories.map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
+                  Close
+                </button>
               </div>
+            )}
 
-              <div className="menu-items-picker-list">
-                {filteredMenuItems.length === 0 ? (
-                  <p className="no-items-text text-muted">No items found</p>
-                ) : (
-                  filteredMenuItems.map((item) => (
-                    <div key={item.id} className="picker-item-card">
-                      <div className="picker-item-info">
-                        <span className="picker-item-name">{item.name}</span>
-                        <span className="picker-item-price">
-                          {CURRENCY_SYMBOL}
-                          {Number(item.price).toFixed(2)}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm btn-add-picker"
-                        onClick={() => handleAddItemToCart(item)}
-                        disabled={isSubmitting}
-                      >
-                        + Add
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
+            <div className="form-group mb-3">
+              <label htmlFor="addition-notes">Addition Instructions / Notes (Optional)</label>
+              <input
+                id="addition-notes"
+                type="text"
+                className="form-input"
+                placeholder="e.g. Added by guest, Urgent, Special request..."
+                value={additionNotes}
+                onChange={(e) => setAdditionNotes(e.target.value)}
+                disabled={isSubmitting}
+              />
             </div>
 
-            {/* Right side: Cart of items to add */}
-            <div className="cart-summary-column">
-              <h4 className="picker-heading">
-                Items to Add ({cartItems.length})
-              </h4>
+            <div className="add-items-layout-grid">
+              {/* Left side: Menu items picker */}
+              <div className="menu-picker-column">
+                <div className="picker-filters-row mb-2">
+                  <input
+                    type="text"
+                    className="form-input filter-search-sm"
+                    placeholder="Search menu..."
+                    value={menuSearch}
+                    onChange={(e) => setMenuSearch(e.target.value)}
+                  />
+                  <select
+                    className="form-input filter-select-sm"
+                    value={selectedCategory}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                  >
+                    <option value="">All Categories</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div className="cart-items-list">
-                {cartItems.length === 0 ? (
-                  <div className="empty-cart-msg text-muted">
-                    No items selected yet. Click "+ Add" on any menu item on the left.
-                  </div>
-                ) : (
-                  cartItems.map((item) => (
-                    <div key={item.menuItemId} className="cart-item-row">
-                      <div className="cart-item-header">
-                        <span className="cart-item-name">{item.name}</span>
-                        <button
-                          type="button"
-                          className="btn-remove-item"
-                          onClick={() => handleRemoveItem(item.menuItemId)}
-                          title="Remove item"
-                          disabled={isSubmitting}
-                        >
-                          ✕
-                        </button>
-                      </div>
+                <div className="menu-items-scroll-list">
+                  {filteredMenuItems.length === 0 ? (
+                    <div className="empty-picker-msg text-muted">No items found</div>
+                  ) : (
+                    filteredMenuItems.map((item) => {
+                      const hasVars = Array.isArray(item.variations) && item.variations.length > 0;
+                      const multipleVars = Array.isArray(item.variations) && item.variations.length > 1;
 
-                      <div className="cart-item-controls">
-                        <div className="qty-control-group">
+                      return (
+                        <div key={item.id} className="picker-item-row">
+                          <div className="picker-item-info">
+                            <span className="picker-item-name">{item.name}</span>
+                            <span className="picker-item-price">
+                              {hasVars ? (
+                                <span>
+                                  <small style={{ fontSize: '0.72rem', fontWeight: 'normal', color: '#6b7280' }}>From </small>
+                                  {CURRENCY_SYMBOL}{Number(item.price).toFixed(2)}
+                                </span>
+                              ) : (
+                                `${CURRENCY_SYMBOL}${Number(item.price).toFixed(2)}`
+                              )}
+                            </span>
+                            {multipleVars && (
+                              <span className="text-muted" style={{ fontSize: '0.72rem', display: 'block' }}>
+                                {item.variations.length} portions
+                              </span>
+                            )}
+                          </div>
                           <button
                             type="button"
-                            className="btn-qty"
-                            onClick={() => handleUpdateQuantity(item.menuItemId, -1)}
+                            className="btn btn-secondary btn-sm btn-add-picker"
+                            onClick={() => handleItemClick(item)}
                             disabled={isSubmitting}
                           >
-                            -
-                          </button>
-                          <span className="qty-display">{item.quantity}</span>
-                          <button
-                            type="button"
-                            className="btn-qty"
-                            onClick={() => handleUpdateQuantity(item.menuItemId, 1)}
-                            disabled={isSubmitting}
-                          >
-                            +
+                            {multipleVars ? 'Select...' : '+ Add'}
                           </button>
                         </div>
-
-                        <span className="cart-item-subtotal">
-                          {CURRENCY_SYMBOL}
-                          {(item.unitPrice * item.quantity).toFixed(2)}
-                        </span>
-                      </div>
-
-                      <input
-                        type="text"
-                        className="form-input item-note-input"
-                        placeholder="Item instructions (optional)"
-                        value={item.notes}
-                        onChange={(e) =>
-                          handleItemNoteChange(item.menuItemId, e.target.value)
-                        }
-                        disabled={isSubmitting}
-                      />
-                    </div>
-                  ))
-                )}
+                      );
+                    })
+                  )}
+                </div>
               </div>
 
-              {/* Total calculation preview */}
-              <div className="cart-pricing-preview">
-                <div className="pricing-row">
-                  <span>Current Order Total:</span>
-                  <span>
-                    {CURRENCY_SYMBOL}
-                    {currentOrderTotal.toFixed(2)}
-                  </span>
+              {/* Right side: Cart of items to add */}
+              <div className="cart-summary-column">
+                <h4 className="picker-heading">
+                  Items to Add ({cartItems.length})
+                </h4>
+
+                <div className="cart-items-list">
+                  {cartItems.length === 0 ? (
+                    <div className="empty-cart-msg text-muted">
+                      No items selected yet. Click "+ Add" on any menu item on the left.
+                    </div>
+                  ) : (
+                    cartItems.map((item) => {
+                      const itemKey = getCartItemKey(item);
+                      return (
+                        <div key={itemKey} className="cart-item-row">
+                          <div className="cart-item-header">
+                            <span className="cart-item-name">
+                              {item.name}
+                              {item.variationName && (
+                                <span
+                                  className="badge badge-info ml-1"
+                                  style={{
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    padding: '0.15rem 0.4rem',
+                                    borderRadius: '4px',
+                                  }}
+                                >
+                                  {item.variationName}
+                                </span>
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn-remove-item"
+                              onClick={() => handleRemoveItem(itemKey)}
+                              title="Remove item"
+                              disabled={isSubmitting}
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          <div className="cart-item-controls">
+                            <div className="qty-control-group">
+                              <button
+                                type="button"
+                                className="btn-qty"
+                                onClick={() => handleUpdateQuantity(itemKey, -1)}
+                                disabled={isSubmitting}
+                              >
+                                -
+                              </button>
+                              <span className="qty-display">{item.quantity}</span>
+                              <button
+                                type="button"
+                                className="btn-qty"
+                                onClick={() => handleUpdateQuantity(itemKey, 1)}
+                                disabled={isSubmitting}
+                              >
+                                +
+                              </button>
+                            </div>
+
+                            <span className="cart-item-subtotal">
+                              {CURRENCY_SYMBOL}
+                              {(item.unitPrice * item.quantity).toFixed(2)}
+                            </span>
+                          </div>
+
+                          <input
+                            type="text"
+                            className="form-input item-note-input"
+                            placeholder="Item instructions (optional)"
+                            value={item.notes}
+                            onChange={(e) =>
+                              handleItemNoteChange(itemKey, e.target.value)
+                            }
+                            disabled={isSubmitting}
+                          />
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
-                <div className="pricing-row font-weight-bold" style={{ color: 'var(--wn-primary, #6366f1)' }}>
-                  <span>Additional Items Subtotal:</span>
-                  <span>
-                    +{CURRENCY_SYMBOL}
-                    {addedSubtotal.toFixed(2)}
-                  </span>
-                </div>
-                <div className="pricing-row total-row">
-                  <span>Estimated New Total:</span>
-                  <span>
-                    {CURRENCY_SYMBOL}
-                    {estimatedNewTotal.toFixed(2)}
-                  </span>
+
+                {/* Total calculation preview */}
+                <div className="cart-pricing-preview">
+                  <div className="pricing-row">
+                    <span>Current Order Total:</span>
+                    <span>
+                      {CURRENCY_SYMBOL}
+                      {currentOrderTotal.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="pricing-row font-weight-bold" style={{ color: 'var(--wn-primary, #6366f1)' }}>
+                    <span>Additional Items Subtotal:</span>
+                    <span>
+                      +{CURRENCY_SYMBOL}
+                      {addedSubtotal.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="pricing-row total-row">
+                    <span>Estimated New Total:</span>
+                    <span>
+                      {CURRENCY_SYMBOL}
+                      {estimatedNewTotal.toFixed(2)}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <div className="modal-footer" style={{ marginTop: '1.25rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={onClose}
-              disabled={isSubmitting}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={isSubmitting || cartItems.length === 0}
-            >
-              {isSubmitting ? 'Adding Items...' : `Add Items (${CURRENCY_SYMBOL}${addedSubtotal.toFixed(2)})`}
-            </button>
-          </div>
-        </form>
-      )}
-    </AdminModal>
+            <div className="modal-footer" style={{ marginTop: '1.25rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={onClose}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={isSubmitting || cartItems.length === 0}
+              >
+                {isSubmitting ? 'Adding Items...' : `Add Items (${CURRENCY_SYMBOL}${addedSubtotal.toFixed(2)})`}
+              </button>
+            </div>
+          </form>
+        )}
+      </AdminModal>
+
+      {/* Variation Selection Dialog */}
+      <VariationSelectModal
+        isOpen={!!selectedMenuItemForVariation}
+        onClose={() => setSelectedMenuItemForVariation(null)}
+        menuItem={selectedMenuItemForVariation}
+        onSelectVariation={(variation) => {
+          if (selectedMenuItemForVariation) {
+            handleAddItemWithVariation(selectedMenuItemForVariation, variation);
+          }
+        }}
+      />
+    </>
   );
 };
 

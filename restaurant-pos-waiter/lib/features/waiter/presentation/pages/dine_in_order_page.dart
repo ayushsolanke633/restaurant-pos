@@ -32,7 +32,8 @@ class _DineInOrderPageState extends State<DineInOrderPage>
 
   List<CategoryModel> _categories = [];
   List<MenuItemModel> _menuItems = [];
-  final Map<int, CartItemModel> _cart = {}; // menuItemId -> CartItemModel
+  final Map<String, CartItemModel> _cart = {}; // itemKey -> CartItemModel
+  final Map<String, int> _originalQuantities = {}; // itemKey -> originalQuantity for existing submitted orders
 
   int? _selectedCategoryId; // null = All
   bool _isLoading = true;
@@ -93,8 +94,12 @@ class _DineInOrderPageState extends State<DineInOrderPage>
       }
 
       // Pre-fill cart only if modifying existing order in normal edit mode (NOT add-on mode)
+      _originalQuantities.clear();
       if (!widget.isAddOnMode && widget.existingOrder != null) {
         for (var item in widget.existingOrder!.items) {
+          final key = '${item.menuItemId}_${item.variationId ?? 'base'}';
+          _originalQuantities[key] =
+              (_originalQuantities[key] ?? 0) + item.quantity;
           final matchedMenuItem = _menuItems.firstWhere(
             (m) => m.id == item.menuItemId,
             orElse: () => MenuItemModel(
@@ -104,8 +109,25 @@ class _DineInOrderPageState extends State<DineInOrderPage>
               isAvailable: true,
             ),
           );
-          _cart[item.menuItemId] = CartItemModel(
+          MenuItemVariationModel? matchedVar;
+          if (item.variationId != null) {
+            final vars = matchedMenuItem.variations
+                .where((v) => v.id == item.variationId)
+                .toList();
+            if (vars.isNotEmpty) {
+              matchedVar = vars.first;
+            } else {
+              matchedVar = MenuItemVariationModel(
+                id: item.variationId!,
+                name: item.variationName ?? 'Variation',
+                price: item.unitPrice,
+                isAvailable: true,
+              );
+            }
+          }
+          _cart[key] = CartItemModel(
             menuItem: matchedMenuItem,
+            variation: matchedVar,
             quantity: item.quantity,
             notes: item.notes,
           );
@@ -113,12 +135,13 @@ class _DineInOrderPageState extends State<DineInOrderPage>
       }
 
       // Purge any cart items that belong to an inactive category
-      _cart.removeWhere((menuItemId, cartItem) {
+      _cart.removeWhere((itemKey, cartItem) {
         final item = cartItem.menuItem;
         if (!item.categoryIsActive) return true;
         if (item.categoryId != null &&
-            !activeCategoryIds.contains(item.categoryId))
+            !activeCategoryIds.contains(item.categoryId)) {
           return true;
+        }
         return false;
       });
 
@@ -179,42 +202,327 @@ class _DineInOrderPageState extends State<DineInOrderPage>
   double get _totalSubtotal =>
       _cart.values.fold(0.0, (sum, i) => sum + i.subtotal);
 
-  void _addItemToCart(MenuItemModel menuItem) {
+  int _getMenuItemCartQuantity(MenuItemModel item) {
+    return _cart.values
+        .where((c) => c.menuItem.id == item.id)
+        .fold(0, (sum, c) => sum + c.quantity);
+  }
+
+  void _onMenuItemTapped(MenuItemModel menuItem) {
     if (!menuItem.isAvailable) return;
 
-    setState(() {
-      if (_cart.containsKey(menuItem.id)) {
-        _cart[menuItem.id]!.quantity += 1;
+    if (menuItem.variations.isEmpty) {
+      _addItemWithVariation(menuItem, null);
+    } else if (menuItem.variations.length == 1) {
+      final variation = menuItem.variations.first;
+      if (variation.isAvailable) {
+        _addItemWithVariation(menuItem, variation);
       } else {
-        _cart[menuItem.id] = CartItemModel(menuItem: menuItem, quantity: 1);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${menuItem.name} (${variation.name}) is out of stock.'),
+          ),
+        );
+      }
+    } else {
+      _showVariationSelectionSheet(menuItem);
+    }
+  }
+
+  void _addItemWithVariation(
+    MenuItemModel menuItem,
+    MenuItemVariationModel? variation,
+  ) {
+    if (!menuItem.isAvailable) return;
+    if (variation != null && !variation.isAvailable) return;
+
+    final dummy = CartItemModel(
+      menuItem: menuItem,
+      variation: variation,
+      quantity: 1,
+    );
+    final key = dummy.itemKey;
+
+    setState(() {
+      if (_cart.containsKey(key)) {
+        _cart[key]!.quantity += 1;
+      } else {
+        _cart[key] = CartItemModel(
+          menuItem: menuItem,
+          variation: variation,
+          quantity: 1,
+        );
       }
     });
   }
 
-  void _decrementCartItem(int menuItemId) {
+  void _decrementCartItem(String itemKey) {
     setState(() {
-      if (_cart.containsKey(menuItemId)) {
-        if (_cart[menuItemId]!.quantity > 1) {
-          _cart[menuItemId]!.quantity -= 1;
-        } else {
-          _cart.remove(menuItemId);
+      if (_cart.containsKey(itemKey)) {
+        final originalQty = _originalQuantities[itemKey] ?? 0;
+        if (originalQty > 0 && _cart[itemKey]!.quantity <= originalQty) {
+          // Cannot decrease existing submitted item quantity
+          return;
+        }
+        if (_cart[itemKey]!.quantity > 1) {
+          _cart[itemKey]!.quantity -= 1;
+        } else if (originalQty == 0) {
+          _cart.remove(itemKey);
         }
       }
     });
   }
 
-  void _removeCartItem(int menuItemId) {
+  void _removeCartItem(String itemKey) {
     setState(() {
-      _cart.remove(menuItemId);
+      final originalQty = _originalQuantities[itemKey] ?? 0;
+      if (originalQty > 0) {
+        // Cannot delete existing submitted item
+        return;
+      }
+      _cart.remove(itemKey);
     });
   }
 
-  void _updateItemNote(int menuItemId, String note) {
+  void _updateItemNote(String itemKey, String note) {
     setState(() {
-      if (_cart.containsKey(menuItemId)) {
-        _cart[menuItemId]!.notes = note;
+      if (_cart.containsKey(itemKey)) {
+        _cart[itemKey]!.notes = note;
       }
     });
+  }
+
+  void _showVariationSelectionSheet(MenuItemModel menuItem) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) {
+          final theme = Theme.of(sheetCtx);
+
+          return Container(
+            padding: const EdgeInsets.only(bottom: 24),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(20),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(20),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              menuItem.name,
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Select portion / size',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(sheetCtx),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Variations List
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    itemCount: menuItem.variations.length,
+                    separatorBuilder: (c, i) => const Divider(height: 1),
+                    itemBuilder: (c, index) {
+                      final variation = menuItem.variations[index];
+                      final itemKey = '${menuItem.id}_${variation.id}';
+                      final inCartQty = _cart[itemKey]?.quantity ?? 0;
+                      final originalQty = _originalQuantities[itemKey] ?? 0;
+                      final isAvailable = variation.isAvailable;
+                      final canDecrement =
+                          originalQty == 0 || inCartQty > originalQty;
+
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    variation.name,
+                                    style: theme.textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                      color: isAvailable
+                                          ? null
+                                          : Colors.grey[600],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '₹${variation.price.toStringAsFixed(2)}',
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: isAvailable
+                                          ? theme.colorScheme.primary
+                                          : Colors.grey[600],
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (!isAvailable)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.red[50],
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(color: Colors.red[200]!),
+                                ),
+                                child: Text(
+                                  'Out of Stock',
+                                  style: TextStyle(
+                                    color: Colors.red[700],
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              )
+                            else if (inCartQty == 0)
+                              ElevatedButton(
+                                onPressed: () {
+                                  _addItemWithVariation(menuItem, variation);
+                                  setSheetState(() {});
+                                  setState(() {});
+                                },
+                                child: const Text('ADD'),
+                              )
+                            else
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primaryContainer,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    TextButton(
+                                      style: TextButton.styleFrom(
+                                        minimumSize: const Size(36, 36),
+                                        padding: EdgeInsets.zero,
+                                      ),
+                                      onPressed: canDecrement
+                                          ? () {
+                                              _decrementCartItem(itemKey);
+                                              setSheetState(() {});
+                                              setState(() {});
+                                            }
+                                          : null,
+                                      child: const Text(
+                                        '-',
+                                        style: TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    Text(
+                                      '$inCartQty',
+                                      style: theme.textTheme.titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                    ),
+                                    TextButton(
+                                      style: TextButton.styleFrom(
+                                        minimumSize: const Size(36, 36),
+                                        padding: EdgeInsets.zero,
+                                      ),
+                                      onPressed: () {
+                                        _addItemWithVariation(
+                                          menuItem,
+                                          variation,
+                                        );
+                                        setSheetState(() {});
+                                        setState(() {});
+                                      },
+                                      child: const Text(
+                                        '+',
+                                        style: TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      backgroundColor: theme.colorScheme.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () => Navigator.pop(sheetCtx),
+                    child: const Text(
+                      'DONE',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   void _showCartBottomSheet() {
@@ -285,7 +593,13 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                           separatorBuilder: (c, i) => const Divider(),
                           itemBuilder: (c, index) {
                             final cartItem = _cart.values.toList()[index];
-                            final item = cartItem.menuItem;
+                            final itemKey = cartItem.itemKey;
+                            final originalQty =
+                                _originalQuantities[itemKey] ?? 0;
+                            final isExistingSubmittedItem = originalQty > 0;
+                            final canDecrement =
+                                !isExistingSubmittedItem ||
+                                cartItem.quantity > originalQty;
 
                             return Card(
                               elevation: 0,
@@ -305,24 +619,25 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                                       children: [
                                         Expanded(
                                           child: Text(
-                                            item.name,
+                                            cartItem.displayName,
                                             style: theme.textTheme.titleMedium
                                                 ?.copyWith(
                                                   fontWeight: FontWeight.bold,
                                                 ),
                                           ),
                                         ),
-                                        TextButton(
-                                          onPressed: () {
-                                            _removeCartItem(item.id);
-                                            setSheetState(() {});
-                                            setState(() {});
-                                          },
-                                          child: const Text(
-                                            'Delete',
-                                            style: TextStyle(color: Colors.red),
+                                        if (!isExistingSubmittedItem)
+                                          TextButton(
+                                            onPressed: () {
+                                              _removeCartItem(itemKey);
+                                              setSheetState(() {});
+                                              setState(() {});
+                                            },
+                                            child: const Text(
+                                              'Delete',
+                                              style: TextStyle(color: Colors.red),
+                                            ),
                                           ),
-                                        ),
                                       ],
                                     ),
                                     Row(
@@ -330,7 +645,7 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                                           MainAxisAlignment.spaceBetween,
                                       children: [
                                         Text(
-                                          '₹${item.price.toStringAsFixed(2)}',
+                                          '₹${cartItem.unitPrice.toStringAsFixed(2)}',
                                           style: theme.textTheme.bodyMedium
                                               ?.copyWith(
                                                 color:
@@ -346,11 +661,13 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                                                 minimumSize: const Size(32, 32),
                                                 padding: EdgeInsets.zero,
                                               ),
-                                              onPressed: () {
-                                                _decrementCartItem(item.id);
-                                                setSheetState(() {});
-                                                setState(() {});
-                                              },
+                                              onPressed: canDecrement
+                                                  ? () {
+                                                      _decrementCartItem(itemKey);
+                                                      setSheetState(() {});
+                                                      setState(() {});
+                                                    }
+                                                  : null,
                                               child: const Text(
                                                 '-',
                                                 style: TextStyle(
@@ -381,7 +698,10 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                                                 padding: EdgeInsets.zero,
                                               ),
                                               onPressed: () {
-                                                _addItemToCart(item);
+                                                _addItemWithVariation(
+                                                  cartItem.menuItem,
+                                                  cartItem.variation,
+                                                );
                                                 setSheetState(() {});
                                                 setState(() {});
                                               },
@@ -415,7 +735,7 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                                         ),
                                       ),
                                       onChanged: (val) {
-                                        _updateItemNote(item.id, val);
+                                        _updateItemNote(itemKey, val);
                                       },
                                     ),
 
@@ -451,7 +771,7 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                                                   .replaceAll(preset, '')
                                                   .trim();
                                             }
-                                            _updateItemNote(item.id, newNote);
+                                            _updateItemNote(itemKey, newNote);
                                             setSheetState(() {});
                                             setState(() {});
                                           },
@@ -754,9 +1074,9 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                   separatorBuilder: (ctx, i) => const SizedBox(height: 12),
                   itemBuilder: (ctx, index) {
                     final item = items[index];
-                    final cartItem = _cart[item.id];
-                    final inCartQty = cartItem?.quantity ?? 0;
+                    final inCartQty = _getMenuItemCartQuantity(item);
                     final isAvailable = item.isAvailable;
+                    final hasVariations = item.hasVariations;
 
                     return Card(
                       elevation: 1,
@@ -834,15 +1154,45 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                                       ),
                                     ),
                                   const SizedBox(height: 8),
-                                  Text(
-                                    '₹${item.price.toStringAsFixed(2)}',
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(
-                                          fontWeight: FontWeight.bold,
-                                          color: isAvailable
-                                              ? theme.colorScheme.primary
-                                              : Colors.grey[600],
+                                  Row(
+                                    children: [
+                                      Text(
+                                        hasVariations
+                                            ? 'From ₹${item.minPrice.toStringAsFixed(2)}'
+                                            : '₹${item.price.toStringAsFixed(2)}',
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.bold,
+                                              color: isAvailable
+                                                  ? theme.colorScheme.primary
+                                                  : Colors.grey[600],
+                                            ),
+                                      ),
+                                      if (hasVariations) ...[
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 6,
+                                            vertical: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: theme.colorScheme.primaryContainer
+                                                .withOpacity(0.6),
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            '${item.variations.length} portions',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: theme.colorScheme
+                                                  .onPrimaryContainer,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
                                         ),
+                                      ],
+                                    ],
                                   ),
                                 ],
                               ),
@@ -858,6 +1208,38 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                                   fontSize: 12,
                                 ),
                               )
+                            else if (hasVariations && item.variations.length > 1)
+                              inCartQty == 0
+                                  ? ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 10,
+                                        ),
+                                      ),
+                                      onPressed: () => _onMenuItemTapped(item),
+                                      child: const Text('SELECT'),
+                                    )
+                                  : OutlinedButton.icon(
+                                      style: OutlinedButton.styleFrom(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 8,
+                                        ),
+                                        side: BorderSide(
+                                          color: theme.colorScheme.primary,
+                                        ),
+                                      ),
+                                      onPressed: () =>
+                                          _showVariationSelectionSheet(item),
+                                      icon: const Icon(Icons.check, size: 16),
+                                      label: Text(
+                                        '$inCartQty in cart',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    )
                             else if (inCartQty == 0)
                               ElevatedButton(
                                 style: ElevatedButton.styleFrom(
@@ -866,57 +1248,79 @@ class _DineInOrderPageState extends State<DineInOrderPage>
                                     vertical: 10,
                                   ),
                                 ),
-                                onPressed: () => _addItemToCart(item),
+                                onPressed: () => _onMenuItemTapped(item),
                                 child: const Text('ADD'),
                               )
-                            else
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.primaryContainer,
-                                  borderRadius: BorderRadius.circular(20),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    TextButton(
-                                      style: TextButton.styleFrom(
-                                        minimumSize: const Size(36, 36),
-                                        padding: EdgeInsets.zero,
-                                      ),
-                                      onPressed: () =>
-                                          _decrementCartItem(item.id),
-                                      child: const Text(
-                                        '-',
-                                        style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
+                            else ...[
+                              // Single variation or 0 variations
+                              Builder(
+                                builder: (context) {
+                                  final singleVariation = hasVariations
+                                      ? item.variations.first
+                                      : null;
+                                  final itemKey =
+                                      '${item.id}_${singleVariation?.id ?? 'base'}';
+                                  final originalQty =
+                                      _originalQuantities[itemKey] ?? 0;
+                                  final canDecrement =
+                                      originalQty == 0 ||
+                                      inCartQty > originalQty;
+
+                                  return Container(
+                                    decoration: BoxDecoration(
+                                      color: theme
+                                          .colorScheme.primaryContainer,
+                                      borderRadius:
+                                          BorderRadius.circular(20),
                                     ),
-                                    Text(
-                                      '$inCartQty',
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.bold,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        TextButton(
+                                          style: TextButton.styleFrom(
+                                            minimumSize: const Size(36, 36),
+                                            padding: EdgeInsets.zero,
                                           ),
-                                    ),
-                                    TextButton(
-                                      style: TextButton.styleFrom(
-                                        minimumSize: const Size(36, 36),
-                                        padding: EdgeInsets.zero,
-                                      ),
-                                      onPressed: () => _addItemToCart(item),
-                                      child: const Text(
-                                        '+',
-                                        style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold,
+                                          onPressed: canDecrement
+                                              ? () =>
+                                                  _decrementCartItem(itemKey)
+                                              : null,
+                                          child: const Text(
+                                            '-',
+                                            style: TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
                                         ),
-                                      ),
+                                        Text(
+                                          '$inCartQty',
+                                          style: theme.textTheme.titleMedium
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                        ),
+                                        TextButton(
+                                          style: TextButton.styleFrom(
+                                            minimumSize: const Size(36, 36),
+                                            padding: EdgeInsets.zero,
+                                          ),
+                                          onPressed: () =>
+                                              _onMenuItemTapped(item),
+                                          child: const Text(
+                                            '+',
+                                            style: TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                  ],
-                                ),
+                                  );
+                                },
                               ),
+                            ],
                           ],
                         ),
                       ),

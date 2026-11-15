@@ -19,6 +19,8 @@ public class ReportBillItemResponse {
     private Long menuItemId;
     private String menuItemName;
     private String name;
+    private Long variationId;
+    private String variationName;
     private Integer quantity;
     private BigDecimal unitPrice;
     private String notes;

@@ -32,13 +32,21 @@ export const calculateCombinedDishes = (orders = []) => {
     if (!order.items || !Array.isArray(order.items)) return;
 
     order.items.forEach((item) => {
-      // Grouping key: use menuItemId (or fallback to menuItemName if ID unavailable)
-      const key = item.menuItemId || item.menuItemName || 'unknown';
+      // Grouping key: use menuItemId + variation (or fallback to menuItemName)
+      const varSuffix = item.variationId ? `_var_${item.variationId}` : (item.variationName ? `_var_${item.variationName}` : '');
+      const key = `${item.menuItemId || item.menuItemName || 'unknown'}${varSuffix}`;
 
       if (!combinedMap.has(key)) {
+        const dishDisplayName = item.variationName
+          ? `${item.menuItemName || 'Unnamed Dish'} (${item.variationName})`
+          : (item.menuItemName || 'Unnamed Dish');
+
         combinedMap.set(key, {
+          key,
           menuItemId: item.menuItemId,
-          menuItemName: item.menuItemName || 'Unnamed Dish',
+          variationId: item.variationId || null,
+          variationName: item.variationName || null,
+          menuItemName: dishDisplayName,
           categoryName: item.categoryName || '',
           totalQuantity: 0,
           orders: [],

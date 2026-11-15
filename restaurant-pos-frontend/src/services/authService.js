@@ -50,11 +50,15 @@ export const authService = {
    */
   async logout() {
     try {
-      await api.post(API_ENDPOINTS.LOGOUT);
+      const token = this.getToken();
+      if (token) {
+        await api.post(API_ENDPOINTS.LOGOUT);
+      }
     } catch {
       // Safe failover: clear local session even if network or server is unreachable / returns 503
     } finally {
       this.clearSession();
+      window.dispatchEvent(new Event('auth:logout'));
     }
   },
 

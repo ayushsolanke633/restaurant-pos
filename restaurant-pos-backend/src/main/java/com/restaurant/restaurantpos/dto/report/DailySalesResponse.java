@@ -17,7 +17,17 @@ import java.time.LocalDate;
 public class DailySalesResponse {
 
     private LocalDate date;
+
+    /**
+     * Total distinct orders created on this date (based on order.createdAt).
+     */
     private Long orders;
+
+    /**
+     * Total distinct orders whose payment was settled on this date (based on payment.paidAt).
+     */
+    private Long ordersSettled;
+
     private Long completedOrders;
     private Long cancelledOrders;
     private BigDecimal revenue;

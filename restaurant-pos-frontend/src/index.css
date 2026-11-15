@@ -4969,4 +4969,245 @@ input:disabled + .slider {
   }
 }
 
+/* ====================================================
+   CHANGE 3: SALES REPORT PRINT & PREVIEW STYLES
+   ==================================================== */
+.sales-report-print-document {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: #111827;
+  background: #ffffff;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 1.5rem;
+}
+
+.report-print-header {
+  border-bottom: 2px solid #111827;
+  padding-bottom: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.restaurant-brand-name {
+  font-size: 1.5rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #111827;
+  margin: 0 0 0.25rem 0;
+  text-align: center;
+}
+
+.restaurant-address {
+  font-size: 0.85rem;
+  color: #4b5563;
+  margin: 0 0 0.25rem 0;
+  text-align: center;
+}
+
+.restaurant-contact-row {
+  display: flex;
+  justify-content: center;
+  gap: 1.25rem;
+  font-size: 0.8rem;
+  color: #4b5563;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.report-title-banner {
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+  margin-top: 0.5rem;
+}
+
+.report-main-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  text-align: center;
+  color: #111827;
+  letter-spacing: 0.03em;
+  margin: 0 0 0.5rem 0;
+}
+
+.report-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem 1rem;
+  font-size: 0.82rem;
+  border-top: 1px dashed #d1d5db;
+  padding-top: 0.5rem;
+}
+
+.meta-cell-label {
+  font-weight: 600;
+  color: #4b5563;
+  margin-right: 0.4rem;
+}
+
+.meta-cell-value {
+  font-weight: 700;
+  color: #111827;
+}
+
+.report-empty-notice {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 4px;
+  padding: 1rem;
+  margin-bottom: 1.25rem;
+  text-align: center;
+}
+
+.report-empty-notice .empty-title {
+  font-weight: 700;
+  color: #92400e;
+  margin: 0 0 0.25rem 0;
+}
+
+.report-empty-notice .empty-desc {
+  font-size: 0.85rem;
+  color: #78350f;
+  margin: 0;
+}
+
+.report-section-block {
+  margin-bottom: 1.5rem;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.report-section-heading {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #111827;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1.5px solid #374151;
+  padding-bottom: 0.35rem;
+  margin: 0 0 0.65rem 0;
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  margin-bottom: 0.5rem;
+}
+
+.report-table th {
+  background: #f3f4f6;
+  color: #111827;
+  font-weight: 700;
+  text-align: left;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.report-table td {
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  color: #1f2937;
+}
+
+.report-table tbody tr:nth-child(even) {
+  background-color: #f9fafb;
+}
+
+.table-total-row td {
+  border-top: 2px solid #111827 !important;
+  border-bottom: 2px solid #111827 !important;
+  background-color: #f3f4f6 !important;
+  font-weight: 700 !important;
+}
+
+.status-pipeline-box {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 0.65rem 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.pipeline-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #4b5563;
+  margin-right: 0.5rem;
+}
+
+.pipeline-chips-row {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+}
+
+.pipeline-chip {
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  color: #374151;
+}
+
+.report-print-footer {
+  margin-top: 2rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #d1d5db;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.footer-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+@media print {
+  .printable-receipt-area.printable-report-mode {
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #111827 !important;
+  }
+
+  .printable-report-mode .sales-report-print-document {
+    padding: 6mm 8mm !important;
+  }
+
+  .printable-report-mode .report-table th {
+    background-color: #e5e7eb !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .printable-report-mode .table-total-row td {
+    background-color: #e5e7eb !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .printable-report-mode .report-title-banner {
+    background-color: #f3f4f6 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+
+
 

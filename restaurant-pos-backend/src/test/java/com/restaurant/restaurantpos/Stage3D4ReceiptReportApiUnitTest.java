@@ -13,6 +13,7 @@ import com.restaurant.restaurantpos.entity.Restaurant;
 import com.restaurant.restaurantpos.entity.RestaurantSettings;
 import com.restaurant.restaurantpos.entity.Role;
 import com.restaurant.restaurantpos.entity.User;
+import com.restaurant.restaurantpos.repository.BillRepository;
 import com.restaurant.restaurantpos.repository.CustomerRepository;
 import com.restaurant.restaurantpos.repository.InventoryItemRepository;
 import com.restaurant.restaurantpos.repository.OrderItemRepository;
@@ -73,6 +74,9 @@ public class Stage3D4ReceiptReportApiUnitTest {
 
     @Mock
     private RestaurantSettingsRepository settingsRepository;
+
+    @Mock
+    private BillRepository billRepository;
 
     @Mock
     private SecurityUtils securityUtils;

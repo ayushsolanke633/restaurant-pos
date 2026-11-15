@@ -40,7 +40,6 @@ class _ActiveOrderDetailPageState extends State<ActiveOrderDetailPage>
   OrderModel? _order;
   UserModel? _currentUser;
   bool _isLoading = true;
-  bool _isProcessing = false;
   String? _errorMessage;
 
   @override
@@ -156,97 +155,6 @@ class _ActiveOrderDetailPageState extends State<ActiveOrderDetailPage>
           _isLoading = false;
         });
       }
-    }
-  }
-
-  Future<void> _handleCancelOrder() async {
-    if (_order == null) return;
-
-    if (_order!.isCompleted || _order!.isCancelled) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Order is already ${_order!.status.toLowerCase()}.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      _fetchActiveOrder();
-      return;
-    }
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cancel Order?'),
-        content: Text(
-          'Are you sure you want to cancel Order #${_order!.id}? Table ${widget.table.tableNumber} will become AVAILABLE.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('No, Keep Order'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              'Yes, Cancel Order',
-              style: TextStyle(color: Colors.white),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    setState(() {
-      _isProcessing = true;
-    });
-
-    try {
-      await _orderService.cancelOrder(_order!.id);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Order #${_order!.id} cancelled successfully. Table released.',
-          ),
-          backgroundColor: Colors.green[700],
-        ),
-      );
-      if (Navigator.canPop(context)) {
-        Navigator.pop(context, true); // Return to tables page with refresh signal
-      } else {
-        Navigator.pushReplacementNamed(context, '/tables');
-      }
-    } on AppException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isProcessing = false;
-      });
-      final msg = e.message.trim().isNotEmpty
-          ? e.message.trim()
-          : 'Unable to cancel order.';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
-      _fetchActiveOrder();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isProcessing = false;
-      });
-      final msg = e.toString().toLowerCase().contains('socket') ||
-              e.toString().toLowerCase().contains('network') ||
-              e.toString().toLowerCase().contains('connection')
-          ? 'Unable to cancel order. Please check network connection.'
-          : 'Unable to cancel order: ${e.toString()}';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
 
@@ -507,7 +415,7 @@ class _ActiveOrderDetailPageState extends State<ActiveOrderDetailPage>
                       children: [
                         Expanded(
                           child: Text(
-                            item.menuItemName,
+                            item.displayName,
                             style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.bold,
                             ),
@@ -624,87 +532,53 @@ class _ActiveOrderDetailPageState extends State<ActiveOrderDetailPage>
                 ),
               ),
 
-              if (_isProcessing)
-                const CircularProgressIndicator()
-              else ...[
-                if (_canAddItems && isOwnerWaiter) ...[
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        backgroundColor: theme.colorScheme.primary,
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: _handleAddItems,
-                      child: const Text(
-                        'ADD ITEMS',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
+              if (_canAddItems && isOwnerWaiter) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      backgroundColor: theme.colorScheme.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: _handleAddItems,
+                    child: const Text(
+                      'ADD ITEMS',
+                      style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                ],
-                if (_order!.isNew && isOwnerWaiter)
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.red,
-                            side: const BorderSide(color: Colors.red),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: _handleCancelOrder,
-                          child: const Text('CANCEL ORDER'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: _handleModifyOrder,
-                          child: const Text('MODIFY ORDER'),
-                        ),
-                      ),
-                    ],
-                  )
-                else if (!_order!.isCompleted && !_order!.isCancelled && isOwnerWaiter)
-                  Column(
-                    children: [
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.red,
-                            side: const BorderSide(color: Colors.red),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: _handleCancelOrder,
-                          child: const Text('CANCEL ORDER'),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('BACK TO TABLES'),
-                        ),
-                      ),
-                    ],
-                  )
-                else
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('BACK TO TABLES'),
-                    ),
-                  ),
+                ),
+                const SizedBox(height: 8),
               ],
+              if (_order!.isNew && isOwnerWaiter)
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onPressed: _handleModifyOrder,
+                        child: const Text('MODIFY ORDER'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('BACK TO TABLES'),
+                      ),
+                    ),
+                  ],
+                )
+              else
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('BACK TO TABLES'),
+                  ),
+                ),
             ],
           ),
         ),
