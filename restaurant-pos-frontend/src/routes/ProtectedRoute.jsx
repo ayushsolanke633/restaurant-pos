@@ -21,7 +21,9 @@ export const ProtectedRoute = ({ allowedRoles }) => {
 
   if (allowedRoles && !allowedRoles.includes(role)) {
     // Cross-role redirect enforcement
-    if (role === ROLES.ADMIN) {
+    if (role === ROLES.SUPER_ADMIN) {
+      return <Navigate to="/super-admin" replace />;
+    } else if (role === ROLES.ADMIN) {
       return <Navigate to="/admin" replace />;
     } else if (role === ROLES.KITCHEN) {
       return <Navigate to="/kitchen" replace />;

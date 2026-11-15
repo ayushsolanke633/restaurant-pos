@@ -15,6 +15,7 @@ export const BillModal = ({ order, isOpen, onClose, onPaymentSuccess, onBillGene
   const [error, setError] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
   const [paymentCompleted, setPaymentCompleted] = useState(false);
+  const [savedPayment, setSavedPayment] = useState(null);
 
   useAutoDismiss(successMsg, () => setSuccessMsg(null));
 
@@ -38,6 +39,7 @@ export const BillModal = ({ order, isOpen, onClose, onPaymentSuccess, onBillGene
     setError(null);
     setSuccessMsg(null);
     setPaymentCompleted(false);
+    setSavedPayment(null);
     initializeInProgressRef.current = false;
   };
 
@@ -69,6 +71,17 @@ export const BillModal = ({ order, isOpen, onClose, onPaymentSuccess, onBillGene
 
       if (existingBill) {
         setBill(existingBill);
+        // If order or bill is completed, load payment details
+        if (isAlreadyCompleted || existingBill.id) {
+          try {
+            const payments = await billingService.getPaymentsByBillId(existingBill.id);
+            if (Array.isArray(payments) && payments.length > 0) {
+              setSavedPayment(payments[0]);
+            }
+          } catch {
+            // Non-blocking payment retrieval
+          }
+        }
         return;
       }
 
@@ -92,6 +105,14 @@ export const BillModal = ({ order, isOpen, onClose, onPaymentSuccess, onBillGene
         try {
           const existing = await billingService.getBillByOrderId(orderToBill.id);
           setBill(existing);
+          try {
+            const payments = await billingService.getPaymentsByBillId(existing.id);
+            if (Array.isArray(payments) && payments.length > 0) {
+              setSavedPayment(payments[0]);
+            }
+          } catch {
+            // Non-blocking
+          }
         } catch {
           setError(serverMsg);
         }
@@ -160,6 +181,7 @@ export const BillModal = ({ order, isOpen, onClose, onPaymentSuccess, onBillGene
 
       const paymentResult = await billingService.processPayment(bill.id, paymentPayload);
       setPaymentCompleted(true);
+      setSavedPayment(paymentResult);
       setSuccessMsg(
         `Payment of ${CURRENCY_SYMBOL}${Number(paymentResult.amount).toFixed(2)} recorded via ${paymentResult.paymentMethod}. Order COMPLETED and Table Released!`
       );
@@ -205,6 +227,16 @@ export const BillModal = ({ order, isOpen, onClose, onPaymentSuccess, onBillGene
                 ? `Dine-In (${order.tableName || `Table ${order.tableNumber || ''}`})`
                 : 'Takeaway'}
             </span>
+            {bill?.gstMode === 'GST_INCLUDED' && (
+              <span className="badge badge-info ml-2" style={{ backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd' }}>
+                GST Included
+              </span>
+            )}
+            {bill?.gstMode === 'GST_EXCLUDED' && (
+              <span className="badge badge-warning ml-2" style={{ backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
+                GST Excluded
+              </span>
+            )}
           </div>
           <button className="modal-close-btn" onClick={handleClose} aria-label="Close modal">
             Close
@@ -267,17 +299,76 @@ export const BillModal = ({ order, isOpen, onClose, onPaymentSuccess, onBillGene
                 </div>
               )}
 
+              {/* Bill Review Summary Card */}
+              {bill && (
+                <div className="bill-review-summary-card card p-3 mb-3" style={{ backgroundColor: '#faf9f5', border: '1px solid var(--wn-border, #e2ded5)' }}>
+                  <div className="d-flex justify-content-between align-items-center mb-2">
+                    <span className="font-bold text-main" style={{ fontSize: '0.95rem' }}>
+                      Bill #{bill.billNumber}
+                    </span>
+                    {bill.gstMode ? (
+                      <span className={`badge ${bill.gstMode === 'GST_INCLUDED' ? 'badge-info' : 'badge-warning'}`} style={{ fontSize: '0.75rem' }}>
+                        {bill.gstMode === 'GST_INCLUDED' ? 'GST Included' : 'GST Excluded'}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="review-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '0.5rem', fontSize: '0.85rem' }}>
+                    <div>
+                      <span className="text-muted" style={{ display: 'block', fontSize: '0.75rem' }}>Subtotal</span>
+                      <span className="font-semibold">{CURRENCY_SYMBOL}{Number(bill.subtotal || 0).toFixed(2)}</span>
+                    </div>
+                    {bill.gstMode && bill.cgstAmount != null && (
+                      <div>
+                        <span className="text-muted" style={{ display: 'block', fontSize: '0.75rem' }}>
+                          CGST {bill.cgstRate != null ? `(${bill.cgstRate}%)` : ''}
+                        </span>
+                        <span className="font-semibold">{CURRENCY_SYMBOL}{Number(bill.cgstAmount).toFixed(2)}</span>
+                      </div>
+                    )}
+                    {bill.gstMode && bill.sgstAmount != null && (
+                      <div>
+                        <span className="text-muted" style={{ display: 'block', fontSize: '0.75rem' }}>
+                          SGST {bill.sgstRate != null ? `(${bill.sgstRate}%)` : ''}
+                        </span>
+                        <span className="font-semibold">{CURRENCY_SYMBOL}{Number(bill.sgstAmount).toFixed(2)}</span>
+                      </div>
+                    )}
+                    {(!bill.gstMode || bill.cgstAmount == null) && Number(bill.taxAmount || 0) > 0 && (
+                      <div>
+                        <span className="text-muted" style={{ display: 'block', fontSize: '0.75rem' }}>Tax</span>
+                        <span className="font-semibold">{CURRENCY_SYMBOL}{Number(bill.taxAmount).toFixed(2)}</span>
+                      </div>
+                    )}
+                    {Number(bill.discountAmount || 0) > 0 && (
+                      <div>
+                        <span className="text-muted" style={{ display: 'block', fontSize: '0.75rem' }}>Discount</span>
+                        <span className="font-semibold text-danger">-{CURRENCY_SYMBOL}{Number(bill.discountAmount).toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-muted" style={{ display: 'block', fontSize: '0.75rem' }}>Total Amount</span>
+                      <span className="font-bold text-success" style={{ fontSize: '1rem' }}>{CURRENCY_SYMBOL}{Number(bill.totalAmount || 0).toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Thermal Receipt Preview Area */}
               <div className="printable-receipt-area mb-4">
-                <ThermalReceipt bill={bill} order={order} paperWidth={paperWidth} />
+                <ThermalReceipt bill={bill} order={order} payment={savedPayment} paperWidth={paperWidth} />
               </div>
 
               {/* Payment Method Selector & Controls (Enabled only if Bill exists) */}
               {bill ? (
                 isOrderCompleted ? (
                   <div className="alert alert-success text-center py-3 font-weight-bold mb-0">
-                    Payment Recorded & Order Completed ({CURRENCY_SYMBOL}
+                    Payment Recorded{savedPayment?.paymentMethod ? ` via ${savedPayment.paymentMethod}` : ''} & Order Completed ({CURRENCY_SYMBOL}
                     {Number(bill.totalAmount).toFixed(2)})
+                    {savedPayment?.transactionReference && (
+                      <div className="text-xs font-mono font-normal mt-1">
+                        Ref: {savedPayment.transactionReference}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="payment-controls-section card p-3">

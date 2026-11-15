@@ -28,7 +28,7 @@ if [[ -z "${DB_URL:-}" || -z "${DB_USERNAME:-}" || -z "${DB_PASSWORD:-}" ]]; the
 fi
 
 # 2. Immutable Approved Migration Allowlist
-APPROVED_ALLOWLIST=("1.0.0" "1.2.0" "1.3.0" "1.4.0" "1.5.0" "1.6.0" "1.7.0" "1.8.0")
+APPROVED_ALLOWLIST=("1.0.0" "1.2.0" "1.3.0" "1.4.0" "1.5.0" "1.6.0" "1.7.0" "1.8.0" "1.9.0")
 # NOTE: 1.1.0 is strictly EXCLUDED as an unauthorized draft
 
 if [[ "$ISOLATED_TEST_DB_ONLY" == "true" ]]; then

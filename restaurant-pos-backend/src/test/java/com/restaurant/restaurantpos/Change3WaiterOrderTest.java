@@ -445,66 +445,28 @@ public class Change3WaiterOrderTest {
     }
 
     @Test
-    @DisplayName("12. Waiter can cancel own NEW order")
-    void testWaiterCanCancelOwnNewOrder() {
+    @DisplayName("12. Waiter cannot cancel NEW order (ADMIN-only cancellation)")
+    void testWaiterCannotCancelOwnNewOrder() {
         when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
         when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-        when(securityUtils.getCurrentUserId()).thenReturn(101L);
 
-        RestaurantTable occupiedTable = new RestaurantTable();
-        occupiedTable.setId(10L);
-        occupiedTable.setRestaurant(restaurant);
-        occupiedTable.setStatus("OCCUPIED");
-
-        Order newOrder = new Order();
-        newOrder.setId(600L);
-        newOrder.setRestaurant(restaurant);
-        newOrder.setTable(occupiedTable);
-        newOrder.setWaiter(waiterUser1);
-        newOrder.setOrderType("DINE_IN");
-        newOrder.setStatus("NEW");
-        newOrder.setSubtotal(new BigDecimal("150.00"));
-        newOrder.setTaxAmount(BigDecimal.ZERO);
-        newOrder.setDiscountAmount(BigDecimal.ZERO);
-        newOrder.setTotalAmount(new BigDecimal("150.00"));
-
-        when(orderRepository.findById(600L)).thenReturn(Optional.of(newOrder));
-        when(orderRepository.save(any(Order.class))).thenReturn(newOrder);
-        when(userRepository.getReferenceById(101L)).thenReturn(waiterUser1);
-
-        OrderResponse res = orderService.cancelOrder(600L);
-        assertNotNull(res);
-        assertEquals("CANCELLED", res.getStatus());
-        assertEquals("AVAILABLE", occupiedTable.getStatus());
-        verify(eventPublisher, times(1)).publishOrderStatusChanged(newOrder);
+        assertThrows(AccessDeniedException.class, () -> orderService.cancelOrder(600L));
     }
 
     @Test
-    @DisplayName("13. Waiter cannot cancel ACCEPTED order")
+    @DisplayName("13. Waiter cannot cancel ACCEPTED order (ADMIN-only cancellation)")
     void testWaiterCannotCancelAcceptedOrder() {
         when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
         when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-        when(securityUtils.getCurrentUserId()).thenReturn(101L);
 
-        Order acceptedOrder = new Order();
-        acceptedOrder.setId(601L);
-        acceptedOrder.setRestaurant(restaurant);
-        acceptedOrder.setTable(availableTable);
-        acceptedOrder.setWaiter(waiterUser1);
-        acceptedOrder.setOrderType("DINE_IN");
-        acceptedOrder.setStatus("ACCEPTED");
-
-        when(orderRepository.findById(601L)).thenReturn(Optional.of(acceptedOrder));
-
-        RuntimeException ex = assertThrows(RuntimeException.class, () -> orderService.cancelOrder(601L));
-        assertTrue(ex.getMessage().contains("Invalid cancellation status"));
+        assertThrows(AccessDeniedException.class, () -> orderService.cancelOrder(601L));
     }
 
     @Test
-    @DisplayName("14. NEW cancellation releases table correctly")
+    @DisplayName("14. Admin NEW cancellation releases table correctly")
     void testNewCancellationReleasesTableCorrectly() {
         when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
-        when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
+        when(securityUtils.getCurrentUserRole()).thenReturn("ADMIN");
         when(securityUtils.getCurrentUserId()).thenReturn(101L);
 
         RestaurantTable tableToRelease = new RestaurantTable();

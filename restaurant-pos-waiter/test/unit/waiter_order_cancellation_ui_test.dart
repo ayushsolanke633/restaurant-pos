@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:restaurant_pos_waiter/core/errors/app_exception.dart';
 import 'package:restaurant_pos_waiter/core/network/websocket_service.dart';
 import 'package:restaurant_pos_waiter/features/waiter/data/auth_service.dart';
 import 'package:restaurant_pos_waiter/features/waiter/data/order_service.dart';
@@ -21,25 +20,12 @@ class MockAuthServiceForCancellation extends Fake implements AuthService {
 
 class MockOrderServiceForCancellation extends Fake implements OrderService {
   OrderModel? activeOrderToReturn;
-  bool cancelOrderCalled = false;
-  int? cancelledOrderId;
-  AppException? exceptionToThrowOnCancel;
 
-  MockOrderServiceForCancellation({this.activeOrderToReturn, this.exceptionToThrowOnCancel});
+  MockOrderServiceForCancellation({this.activeOrderToReturn});
 
   @override
   Future<OrderModel?> getActiveOrderByTable(int tableId) async {
     return activeOrderToReturn;
-  }
-
-  @override
-  Future<OrderModel> cancelOrder(int orderId) async {
-    cancelOrderCalled = true;
-    cancelledOrderId = orderId;
-    if (exceptionToThrowOnCancel != null) {
-      throw exceptionToThrowOnCancel!;
-    }
-    return activeOrderToReturn!;
   }
 }
 
@@ -79,8 +65,8 @@ void main() {
     );
   }
 
-  group('Waiter Order Cancellation UI Tests', () {
-    testWidgets('1. Waiter sees CANCEL ORDER button for NEW order', (tester) async {
+  group('Waiter App: Admin-Only Order Cancellation (No Cancellation for Waiters)', () {
+    testWidgets('1. Waiter does NOT see CANCEL ORDER button for NEW order (sees MODIFY ORDER and ADD ITEMS)', (tester) async {
       final mockAuth = MockAuthServiceForCancellation(userToReturn: currentUser);
       final mockOrder = createOrder(id: 101, status: 'NEW');
       final mockOrderService = MockOrderServiceForCancellation(activeOrderToReturn: mockOrder);
@@ -97,10 +83,16 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('CANCEL ORDER'), findsOneWidget);
+      // CANCEL ORDER button MUST NOT be present
+      expect(find.text('CANCEL ORDER'), findsNothing);
+
+      // Permitted waiter actions MUST still be present
+      expect(find.text('MODIFY ORDER'), findsOneWidget);
+      expect(find.text('ADD ITEMS'), findsOneWidget);
+      expect(find.text('BACK TO TABLES'), findsOneWidget);
     });
 
-    testWidgets('2. Waiter sees CANCEL ORDER button for ACCEPTED active unbilled order (KDS disabled mode)', (tester) async {
+    testWidgets('2. Waiter does NOT see CANCEL ORDER button for ACCEPTED order (sees ADD ITEMS and BACK TO TABLES)', (tester) async {
       final mockAuth = MockAuthServiceForCancellation(userToReturn: currentUser);
       final mockOrder = createOrder(id: 102, status: 'ACCEPTED');
       final mockOrderService = MockOrderServiceForCancellation(activeOrderToReturn: mockOrder);
@@ -117,10 +109,12 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('CANCEL ORDER'), findsOneWidget);
+      expect(find.text('CANCEL ORDER'), findsNothing);
+      expect(find.text('ADD ITEMS'), findsOneWidget);
+      expect(find.text('BACK TO TABLES'), findsOneWidget);
     });
 
-    testWidgets('3. Waiter sees CANCEL ORDER button for PREPARING / READY order', (tester) async {
+    testWidgets('3. Waiter does NOT see CANCEL ORDER button for PREPARING or READY order', (tester) async {
       final mockAuth = MockAuthServiceForCancellation(userToReturn: currentUser);
       final mockOrder = createOrder(id: 103, status: 'READY');
       final mockOrderService = MockOrderServiceForCancellation(activeOrderToReturn: mockOrder);
@@ -137,7 +131,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('CANCEL ORDER'), findsOneWidget);
+      expect(find.text('CANCEL ORDER'), findsNothing);
+      expect(find.text('ADD ITEMS'), findsOneWidget);
+      expect(find.text('BACK TO TABLES'), findsOneWidget);
     });
 
     testWidgets('4. CANCEL ORDER button is NOT visible for other waiter orders', (tester) async {
@@ -158,6 +154,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('CANCEL ORDER'), findsNothing);
+      expect(find.text('MODIFY ORDER'), findsNothing);
+      expect(find.text('BACK TO TABLES'), findsOneWidget);
     });
 
     testWidgets('5. CANCEL ORDER button is NOT visible for COMPLETED or CANCELLED order', (tester) async {
@@ -178,106 +176,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('CANCEL ORDER'), findsNothing);
-    });
-
-    testWidgets('6. Successful cancellation shows dialog, calls API, and displays success message', (tester) async {
-      final mockAuth = MockAuthServiceForCancellation(userToReturn: currentUser);
-      final mockOrder = createOrder(id: 106, status: 'NEW');
-      final mockOrderService = MockOrderServiceForCancellation(activeOrderToReturn: mockOrder);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ActiveOrderDetailPage(
-            table: const TableModel(id: 5, restaurantId: 1, capacity: 4, tableNumber: '5', status: 'OCCUPIED'),
-            orderService: mockOrderService,
-            authService: mockAuth,
-            webSocketService: MockWebSocketServiceForCancellation(),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      // Tap Cancel Order
-      await tester.tap(find.text('CANCEL ORDER'));
-      await tester.pumpAndSettle();
-
-      // Verify confirmation dialog
-      expect(find.text('Cancel Order?'), findsOneWidget);
-      expect(find.text('Are you sure you want to cancel Order #106? Table 5 will become AVAILABLE.'), findsOneWidget);
-
-      // Tap Yes, Cancel Order
-      await tester.tap(find.text('Yes, Cancel Order'));
-      await tester.pumpAndSettle();
-
-      expect(mockOrderService.cancelOrderCalled, isTrue);
-      expect(mockOrderService.cancelledOrderId, 106);
-      expect(find.text('Order #106 cancelled successfully. Table released.'), findsOneWidget);
-    });
-
-    testWidgets('7. Backend conflict rejection displays exact server message to waiter', (tester) async {
-      final mockAuth = MockAuthServiceForCancellation(userToReturn: currentUser);
-      final mockOrder = createOrder(id: 107, status: 'ACCEPTED');
-      final mockOrderService = MockOrderServiceForCancellation(
-        activeOrderToReturn: mockOrder,
-        exceptionToThrowOnCancel: const AppException(
-          'Cannot cancel order: bill has already been generated',
-          code: '409',
-        ),
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ActiveOrderDetailPage(
-            table: const TableModel(id: 5, restaurantId: 1, capacity: 4, tableNumber: '5', status: 'OCCUPIED'),
-            orderService: mockOrderService,
-            authService: mockAuth,
-            webSocketService: MockWebSocketServiceForCancellation(),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('CANCEL ORDER'));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Yes, Cancel Order'));
-      await tester.pumpAndSettle();
-
-      expect(mockOrderService.cancelOrderCalled, isTrue);
-      expect(find.text('Cannot cancel order: bill has already been generated'), findsOneWidget);
-    });
-
-    testWidgets('8. KDS rejection displays exact server message after kitchen acceptance', (tester) async {
-      final mockAuth = MockAuthServiceForCancellation(userToReturn: currentUser);
-      final mockOrder = createOrder(id: 108, status: 'ACCEPTED');
-      final mockOrderService = MockOrderServiceForCancellation(
-        activeOrderToReturn: mockOrder,
-        exceptionToThrowOnCancel: const AppException(
-          'Invalid cancellation status: Order cannot be cancelled after kitchen acceptance',
-          code: '409',
-        ),
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ActiveOrderDetailPage(
-            table: const TableModel(id: 5, restaurantId: 1, capacity: 4, tableNumber: '5', status: 'OCCUPIED'),
-            orderService: mockOrderService,
-            authService: mockAuth,
-            webSocketService: MockWebSocketServiceForCancellation(),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('CANCEL ORDER'));
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.text('Yes, Cancel Order'));
-      await tester.pumpAndSettle();
-
-      expect(mockOrderService.cancelOrderCalled, isTrue);
-      expect(find.text('Invalid cancellation status: Order cannot be cancelled after kitchen acceptance'), findsOneWidget);
+      expect(find.text('BACK TO TABLES'), findsOneWidget);
     });
   });
 }

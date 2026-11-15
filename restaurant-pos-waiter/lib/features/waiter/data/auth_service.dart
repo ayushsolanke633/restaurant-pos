@@ -1,6 +1,7 @@
 import '../../../core/constants/api_constants.dart';
 import '../../../core/errors/app_exception.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/websocket_service.dart';
 import '../../../core/storage/secure_storage_service.dart';
 import '../../../core/utils/jwt_decoder.dart';
 import '../../../shared/models/login_request.dart';
@@ -69,10 +70,16 @@ class AuthService {
   /// to persist the revocation record.
   Future<void> logout() async {
     try {
-      await _apiClient.post(ApiConstants.logoutEndpoint, body: {});
+      final token = await _storageService.getToken();
+      if (token != null && token.isNotEmpty) {
+        await _apiClient.post(ApiConstants.logoutEndpoint, body: {});
+      }
     } catch (_) {
       // In case of network errors or server unreachability / 503, still clear local session safely
     } finally {
+      try {
+        await WebSocketService.instance().disconnect();
+      } catch (_) {}
       await clearSession();
     }
   }
@@ -85,6 +92,9 @@ class AuthService {
     }
 
     if (JwtDecoder.isExpired(token)) {
+      try {
+        await WebSocketService.instance().disconnect();
+      } catch (_) {}
       await clearSession();
       return false;
     }
@@ -100,6 +110,9 @@ class AuthService {
     }
 
     if (JwtDecoder.isExpired(token)) {
+      try {
+        await WebSocketService.instance().disconnect();
+      } catch (_) {}
       await clearSession();
       return null;
     }

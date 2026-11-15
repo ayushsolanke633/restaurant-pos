@@ -1,9 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import reportService from '../../services/reportService';
+import settingsService from '../../services/settingsService';
+import useAuth from '../../hooks/useAuth';
 import ThermalReceipt from '../../components/admin/ThermalReceipt';
+import SalesReportModal from '../../components/admin/SalesReportModal';
+import SalesReportPrintDocument from '../../components/admin/SalesReportPrintDocument';
 import { CURRENCY_SYMBOL } from '../../utils/constants';
 
 export const ReportsPage = () => {
+  const { user } = useAuth();
+  const [settings, setSettings] = useState(null);
+  const [isPrintReportModalOpen, setIsPrintReportModalOpen] = useState(false);
+  const [printReportType, setPrintReportType] = useState('ALL');
+
   // Date Helpers
   const formatDateISO = (d) => {
     const year = d.getFullYear();
@@ -116,6 +125,24 @@ export const ReportsPage = () => {
     fetchReports();
   }, [fetchReports]);
 
+  // Load restaurant settings for report branding (name, address, phone, GSTIN)
+  useEffect(() => {
+    let isMounted = true;
+    settingsService
+      .getSettings()
+      .then((data) => {
+        if (isMounted && data) {
+          setSettings(data);
+        }
+      })
+      .catch((err) => {
+        console.warn('Could not load restaurant settings for report header:', err);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Extract payment breakdown values helper
   const getPaymentMethodVal = (methodName) => {
     const item = paymentsReport.find((p) => p.paymentMethod?.toUpperCase() === methodName.toUpperCase());
@@ -193,6 +220,39 @@ export const ReportsPage = () => {
   const handlePrintAllBills = () => triggerPrint('all');
   const handleDownloadAllBills = () => triggerPrint('all');
 
+  const handlePrintSalesReport = useCallback((reportType = 'ALL') => {
+    if (isPrinting) return;
+
+    setIsPrinting(true);
+    setPrintMode('sales-report');
+    setPrintReportType(reportType);
+
+    const origTitle = document.title;
+    const titleStr = fromDate === toDate
+      ? `sales-report-${fromDate}`
+      : `sales-report-${fromDate}-to-${toDate}`;
+    document.title = titleStr;
+
+    const cleanup = () => {
+      document.title = origTitle;
+      setPrintMode(null);
+      setIsPrinting(false);
+      window.removeEventListener('afterprint', cleanup);
+    };
+
+    window.addEventListener('afterprint', cleanup, { once: true });
+
+    setTimeout(() => {
+      try {
+        window.print();
+      } catch (err) {
+        console.error('Print sales report error:', err);
+      } finally {
+        setTimeout(cleanup, 500);
+      }
+    }, 100);
+  }, [isPrinting, fromDate, toDate]);
+
   const totalReportBillsCount = reportBills.length;
   const totalReportBillsAmount = reportBills.reduce((acc, b) => acc + Number(b.totalAmount || b.total || 0), 0);
 
@@ -204,8 +264,23 @@ export const ReportsPage = () => {
           <h1>Analytics & Reports</h1>
           <p className="subtitle">Comprehensive financial summary, sales performance, payment channels, and item rankings</p>
         </div>
-        <div className="header-actions">
-          <button className="btn btn-secondary btn-icon" onClick={fetchReports} title="Refresh Report Data">
+        <div className="header-actions d-flex gap-2">
+          <button
+            type="button"
+            className="btn btn-primary btn-icon"
+            onClick={() => setIsPrintReportModalOpen(true)}
+            disabled={loading || isPrinting}
+            title="Print or export sales report"
+          >
+            <span className="icon">🖨️</span> Print Sales Report
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-icon"
+            onClick={fetchReports}
+            disabled={isPrinting}
+            title="Refresh Report Data"
+          >
             Refresh Reports
           </button>
         </div>
@@ -298,17 +373,19 @@ export const ReportsPage = () => {
                 {formatCurrency(salesReport?.totalRevenue)}
               </div>
               <div className="text-xs text-muted mt-1">
-                From {salesReport?.completedOrders || 0} paid completed orders
+                From {salesReport?.ordersSettled != null ? salesReport.ordersSettled : (salesReport?.completedOrders || 0)} settled order{(salesReport?.ordersSettled != null ? salesReport.ordersSettled : (salesReport?.completedOrders || 0)) === 1 ? '' : 's'}
               </div>
             </div>
 
             <div className="metric-card card">
               <div className="metric-header">
-                <span className="metric-title">Total Orders</span>
+                <span className="metric-title">Orders Settled</span>
               </div>
-              <div className="metric-value">{salesReport?.totalOrders || 0}</div>
+              <div className="metric-value font-extrabold text-main">
+                {salesReport?.ordersSettled != null ? salesReport.ordersSettled : (salesReport?.completedOrders || 0)}
+              </div>
               <div className="text-xs text-muted mt-1">
-                Completed: {salesReport?.completedOrders || 0} | Cancelled: {salesReport?.cancelledOrders || 0}
+                Orders Created: {salesReport?.totalOrders || 0} | Bills Generated: {salesReport?.billsGenerated != null ? salesReport.billsGenerated : 0}
               </div>
             </div>
 
@@ -319,7 +396,7 @@ export const ReportsPage = () => {
               <div className="metric-value text-info">
                 {formatCurrency(salesReport?.averageOrderValue)}
               </div>
-              <div className="text-xs text-muted mt-1">Per paid completed order</div>
+              <div className="text-xs text-muted mt-1">Per settled order</div>
             </div>
 
             <div className="metric-card card">
@@ -521,7 +598,8 @@ export const ReportsPage = () => {
                     <thead>
                       <tr>
                         <th>Date</th>
-                        <th>Total Orders</th>
+                        <th>Orders Created</th>
+                        <th>Orders Settled</th>
                         <th>Completed</th>
                         <th>Cancelled</th>
                         <th className="text-right">Revenue</th>
@@ -532,6 +610,7 @@ export const ReportsPage = () => {
                         <tr key={idx}>
                           <td className="font-semibold">{formatDateLabel(row.date)}</td>
                           <td>{row.orders}</td>
+                          <td><span className="font-semibold text-main">{row.ordersSettled != null ? row.ordersSettled : (row.completedOrders || 0)}</span></td>
                           <td><span className="text-success font-semibold">{row.completedOrders}</span></td>
                           <td><span className="text-danger font-semibold">{row.cancelledOrders}</span></td>
                           <td className="text-right font-extrabold text-success">
@@ -819,8 +898,32 @@ export const ReportsPage = () => {
         </div>
       )}
 
+      {/* Sales Report Print & Scope Preview Modal */}
+      <SalesReportModal
+        isOpen={isPrintReportModalOpen}
+        onClose={() => setIsPrintReportModalOpen(false)}
+        onPrint={(scope) => {
+          setIsPrintReportModalOpen(false);
+          handlePrintSalesReport(scope);
+        }}
+        restaurantName={settings?.restaurantName || 'AnnaDhara Restaurant'}
+        restaurantSettings={settings}
+        user={user}
+        fromDate={fromDate}
+        toDate={toDate}
+        salesReport={salesReport}
+        paymentsReport={paymentsReport}
+        orderTypesReport={orderTypesReport}
+        statusReport={statusReport}
+        topItemsReport={topItemsReport}
+        categorySalesReport={categorySalesReport}
+        dailySalesBreakdown={dailySalesBreakdown}
+        isMultiDay={isMultiDay}
+        isPrinting={isPrinting}
+      />
+
       {/* Hidden printable area for @media print */}
-      <div className="printable-receipt-area">
+      <div className={`printable-receipt-area ${printMode === 'sales-report' ? 'printable-report-mode' : ''}`}>
         {printMode === 'single' && printingBill && (
           <ThermalReceipt bill={printingBill} order={printingBill} paperWidth={paperWidth} />
         )}
@@ -829,6 +932,23 @@ export const ReportsPage = () => {
             <ThermalReceipt bill={b} order={b} paperWidth={paperWidth} />
           </div>
         ))}
+        {printMode === 'sales-report' && (
+          <SalesReportPrintDocument
+            restaurantName={settings?.restaurantName || 'AnnaDhara Restaurant'}
+            restaurantSettings={settings}
+            user={user}
+            fromDate={fromDate}
+            toDate={toDate}
+            salesReport={salesReport}
+            paymentsReport={paymentsReport}
+            orderTypesReport={orderTypesReport}
+            statusReport={statusReport}
+            topItemsReport={topItemsReport}
+            categorySalesReport={categorySalesReport}
+            dailySalesBreakdown={dailySalesBreakdown}
+            reportType={printReportType}
+          />
+        )}
       </div>
     </div>
   );

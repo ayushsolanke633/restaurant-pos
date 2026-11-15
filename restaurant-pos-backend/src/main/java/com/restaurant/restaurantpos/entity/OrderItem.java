@@ -2,6 +2,7 @@ package com.restaurant.restaurantpos.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -41,6 +42,13 @@ public class OrderItem {
     @ManyToOne
     @JoinColumn(name = "menu_item_id", nullable = false)
     private MenuItem menuItem;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "variation_id")
+    private MenuItemVariation variation;
+
+    @Column(name = "variation_name", length = 100)
+    private String variationName;
 
     @Column(name = "quantity", nullable = false)
     private Integer quantity;

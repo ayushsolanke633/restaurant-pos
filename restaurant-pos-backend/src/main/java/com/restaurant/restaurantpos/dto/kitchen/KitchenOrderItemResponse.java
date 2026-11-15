@@ -16,6 +16,8 @@ public class KitchenOrderItemResponse {
     private Long id;
     private Long menuItemId;
     private String menuItemName;
+    private Long variationId;
+    private String variationName;
     private Integer quantity;
     private String notes;
     private String categoryName;

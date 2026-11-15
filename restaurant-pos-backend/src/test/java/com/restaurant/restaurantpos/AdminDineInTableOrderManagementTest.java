@@ -458,7 +458,6 @@ public class AdminDineInTableOrderManagementTest {
         when(orderRepository.findByIdAndRestaurantId(900L, 1L)).thenReturn(Optional.of(order));
         when(billRepository.existsByRestaurantIdAndOrderId(1L, 900L)).thenReturn(false);
         when(billRepository.existsByOrderId(900L)).thenReturn(false);
-        when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(settingsKdsEnabled));
 
         when(orderRepository.save(any(Order.class))).thenReturn(order);
         when(orderRepository.existsByRestaurantIdAndTableIdAndOrderTypeAndStatusIn(eq(1L), eq(20L), eq("DINE_IN"), anyCollection()))
@@ -515,7 +514,6 @@ public class AdminDineInTableOrderManagementTest {
         when(orderRepository.findByIdAndRestaurantId(902L, 1L)).thenReturn(Optional.of(orderToCancel));
         when(billRepository.existsByRestaurantIdAndOrderId(1L, 902L)).thenReturn(false);
         when(billRepository.existsByOrderId(902L)).thenReturn(false);
-        when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(settingsKdsEnabled));
         when(orderRepository.save(any(Order.class))).thenReturn(orderToCancel);
 
         // Another active order exists on Table 2!

@@ -136,7 +136,9 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
           e.message.toLowerCase().contains('bill already exists')) {
         displayError = 'Items cannot be added because the bill has already been generated.';
       } else if (e.code == '403') {
-        displayError = 'You do not have permission to modify this order.';
+        displayError = (e.message.isNotEmpty && !e.message.contains('Exception'))
+            ? e.message
+            : 'You do not have permission to modify this order.';
       } else if (e.code == '404') {
         displayError = 'Order or menu item could not be found.';
       } else if (e.code == '500') {
@@ -273,7 +275,7 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
                           children: [
                             Expanded(
                               child: Text(
-                                item.menuItem.name,
+                                item.displayName,
                                 style: theme.textTheme.titleMedium?.copyWith(
                                   fontWeight: FontWeight.bold,
                                 ),

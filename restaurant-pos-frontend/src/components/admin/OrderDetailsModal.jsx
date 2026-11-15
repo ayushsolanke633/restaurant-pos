@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import useAuth from '../../hooks/useAuth';
 import AdminModal from './AdminModal';
 import billingService from '../../services/billingService';
 import { CURRENCY_SYMBOL } from '../../utils/constants';
@@ -13,6 +14,8 @@ export const OrderDetailsModal = ({
   hasMultipleOrders = false,
   onBackToOrderList,
 }) => {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN';
   const [billExists, setBillExists] = useState(false);
   const [checkingBill, setCheckingBill] = useState(false);
   const [isConfirmingCancel, setIsConfirmingCancel] = useState(false);
@@ -125,14 +128,18 @@ export const OrderDetailsModal = ({
   };
 
   const handleConfirmCancel = async () => {
-    if (!onCancelOrder) return;
+    if (!isAdmin || !onCancelOrder) return;
     setIsCancelling(true);
     setCancelError('');
     try {
       await onCancelOrder(order);
       setIsConfirmingCancel(false);
     } catch (err) {
-      setCancelError(err.response?.data?.message || err.message || 'Failed to cancel order.');
+      if (err.response?.status === 403) {
+        setCancelError('Access Denied: Only ADMIN can cancel orders.');
+      } else {
+        setCancelError(err.response?.data?.message || err.message || 'Failed to cancel order.');
+      }
     } finally {
       setIsCancelling(false);
     }
@@ -280,6 +287,19 @@ export const OrderDetailsModal = ({
                         <div className="item-name-cell">
                           <span className="font-weight-bold">
                             {item.menuItemName || `Item #${item.menuItemId}`}
+                            {item.variationName && (
+                              <span
+                                className="badge badge-info ml-1"
+                                style={{
+                                  fontSize: '0.72rem',
+                                  fontWeight: 600,
+                                  padding: '0.15rem 0.35rem',
+                                  borderRadius: '4px',
+                                }}
+                              >
+                                {item.variationName}
+                              </span>
+                            )}
                           </span>
                           {item.notes && (
                             <span className="item-note-text">
@@ -379,8 +399,8 @@ export const OrderDetailsModal = ({
           </div>
         </div>
 
-        {/* Inline cancellation confirmation dialogue */}
-        {isConfirmingCancel && (
+        {/* Inline cancellation confirmation dialogue - ADMIN ONLY */}
+        {isAdmin && isConfirmingCancel && (
           <div
             className="card confirm-cancel-card p-3 my-3"
             style={{
@@ -453,8 +473,8 @@ export const OrderDetailsModal = ({
               )
             )}
 
-            {/* Cancel Order Action */}
-            {onCancelOrder && !isTerminal && !isConfirmingCancel && (
+            {/* Cancel Order Action - ADMIN ONLY */}
+            {isAdmin && onCancelOrder && !isTerminal && !isConfirmingCancel && (
               canCancel ? (
                 <button
                   type="button"

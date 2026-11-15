@@ -15,6 +15,7 @@ import { CURRENCY_SYMBOL } from '../../utils/constants';
 
 export const TablesPage = () => {
   const { user } = useAuth();
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN';
   const restaurantId = user?.restaurantId;
 
   const [tables, setTables] = useState([]);
@@ -368,6 +369,10 @@ export const TablesPage = () => {
 
   // Handler for Admin Order Cancellation directly from OrderDetailsModal
   const handleCancelOrder = async (order) => {
+    if (!isAdmin) {
+      setError('Access Denied: Only ADMIN can cancel orders.');
+      return;
+    }
     setError('');
     setSuccessMsg('');
     try {
@@ -377,7 +382,9 @@ export const TablesPage = () => {
       setSuccessMsg(`Order #${cancelled.id} has been CANCELLED and table status updated.`);
       fetchTablesAndOrders(false);
     } catch (err) {
-      const msg = err.response?.data?.message || err.message || 'Failed to cancel order.';
+      const msg = err.response?.status === 403
+        ? 'Access Denied: Only ADMIN can cancel orders.'
+        : (err.response?.data?.message || err.message || 'Failed to cancel order.');
       setError(msg);
       throw err; // Re-throw so OrderDetailsModal can display error inline if desired
     }
@@ -705,7 +712,7 @@ export const TablesPage = () => {
         order={selectedOrder}
         onGenerateBill={handleGenerateBill}
         onAddItems={handleOpenAddItems}
-        onCancelOrder={handleCancelOrder}
+        onCancelOrder={isAdmin ? handleCancelOrder : undefined}
         hasMultipleOrders={multipleActiveOrders.length > 1}
         onBackToOrderList={handleBackToOrdersList}
       />

@@ -86,11 +86,11 @@ public class MigrationGateHardeningRegressionTest {
         }
 
         @Test
-        @DisplayName("Execution boundary strictly blocks unapproved future version 1.9.0")
-        void testCallbackRejectsUnapprovedV1_9_0() {
+        @DisplayName("Execution boundary strictly blocks unapproved future version 2.0.0")
+        void testCallbackRejectsUnapprovedV2_0_0() {
             Context mockContext = mock(Context.class);
             MigrationInfo mockInfo = mock(MigrationInfo.class);
-            MigrationVersion mockVersion = MigrationVersion.fromVersion("1.9.0");
+            MigrationVersion mockVersion = MigrationVersion.fromVersion("2.0.0");
 
             when(mockContext.getMigrationInfo()).thenReturn(mockInfo);
             when(mockInfo.getVersion()).thenReturn(mockVersion);
@@ -98,15 +98,15 @@ public class MigrationGateHardeningRegressionTest {
             FlywayException ex = assertThrows(FlywayException.class, () ->
                     callback.handle(Event.BEFORE_EACH_MIGRATE, mockContext));
             assertTrue(ex.getMessage().contains("Flyway Migration Gate REJECTED"));
-            assertTrue(ex.getMessage().contains("1.9.0"));
+            assertTrue(ex.getMessage().contains("2.0.0"));
         }
 
         @Test
-        @DisplayName("Execution boundary permits all approved migration versions (1.0.0 through 1.8.0)")
+        @DisplayName("Execution boundary permits all approved migration versions (1.0.0 through 1.9.0)")
         void testCallbackPermitsApprovedVersions() {
             Context mockContext = mock(Context.class);
 
-            for (String approvedVer : Arrays.asList("1.0.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")) {
+            for (String approvedVer : Arrays.asList("1.0.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0", "1.9.0")) {
                 MigrationInfo mockInfo = mock(MigrationInfo.class);
                 MigrationVersion mockVersion = MigrationVersion.fromVersion(approvedVer);
                 when(mockContext.getMigrationInfo()).thenReturn(mockInfo);
@@ -177,29 +177,29 @@ public class MigrationGateHardeningRegressionTest {
         }
 
         @Test
-        @DisplayName("Passing preflight validation does NOT authorize unapproved future version 1.9.0")
-        void testPreflightSuccessDoesNotAuthorizeUnapprovedV1_9_0() throws Exception {
+        @DisplayName("Passing preflight validation does NOT authorize unapproved future version 2.0.0")
+        void testPreflightSuccessDoesNotAuthorizeUnapprovedV2_0_0() throws Exception {
             Connection mockConn = createCleanMockConnection();
             MigrationPreflightValidator.PreflightResult preflightResult =
-                    MigrationPreflightValidator.validateVersion(mockConn, "1.9.0");
+                    MigrationPreflightValidator.validateVersion(mockConn, "2.0.0");
             assertTrue(preflightResult.isValid());
 
-            assertFalse(MigrationApprovalGate.APPROVED_ALLOWLIST.contains("1.9.0"),
-                    "1.9.0 must NOT be in the approved allowlist despite passing preflight");
-            assertFalse(MigrationApprovalGate.isVersionApprovedForConnection("1.9.0", "jdbc:postgresql://localhost:5432/restaurant_pos"),
-                    "1.9.0 must NOT be approved for connection");
+            assertFalse(MigrationApprovalGate.APPROVED_ALLOWLIST.contains("2.0.0"),
+                    "2.0.0 must NOT be in the approved allowlist despite passing preflight");
+            assertFalse(MigrationApprovalGate.isVersionApprovedForConnection("2.0.0", "jdbc:postgresql://localhost:5432/restaurant_pos"),
+                    "2.0.0 must NOT be approved for connection");
 
             Context mockContext = mock(Context.class);
             MigrationInfo mockInfo = mock(MigrationInfo.class);
             when(mockContext.getMigrationInfo()).thenReturn(mockInfo);
-            when(mockInfo.getVersion()).thenReturn(MigrationVersion.fromVersion("1.9.0"));
+            when(mockInfo.getVersion()).thenReturn(MigrationVersion.fromVersion("2.0.0"));
 
             assertThrows(FlywayException.class, () ->
                     callback.handle(Event.BEFORE_EACH_MIGRATE, mockContext));
         }
 
         @Test
-        @DisplayName("Versions 1.6.0, 1.7.0, and 1.8.0 authorization derives strictly from production allowlist, not preflight")
+        @DisplayName("Versions 1.6.0, 1.7.0, 1.8.0, and 1.9.0 authorization derives strictly from production allowlist, not preflight")
         void testProductionVersionsAuthorizedByAllowlistNotPreflight() throws Exception {
             // All approved versions are authorized by explicit inclusion in APPROVED_ALLOWLIST
             assertTrue(MigrationApprovalGate.APPROVED_ALLOWLIST.contains("1.6.0"),
@@ -208,6 +208,8 @@ public class MigrationGateHardeningRegressionTest {
                     "1.7.0 must be in production APPROVED_ALLOWLIST");
             assertTrue(MigrationApprovalGate.APPROVED_ALLOWLIST.contains("1.8.0"),
                     "1.8.0 must be in production APPROVED_ALLOWLIST");
+            assertTrue(MigrationApprovalGate.APPROVED_ALLOWLIST.contains("1.9.0"),
+                    "1.9.0 must be in production APPROVED_ALLOWLIST");
 
             assertTrue(MigrationApprovalGate.isVersionApprovedForConnection("1.6.0", "jdbc:postgresql://localhost:5432/restaurant_pos"),
                     "1.6.0 is authorized for production database");
@@ -215,6 +217,8 @@ public class MigrationGateHardeningRegressionTest {
                     "1.7.0 is authorized for production database");
             assertTrue(MigrationApprovalGate.isVersionApprovedForConnection("1.8.0", "jdbc:postgresql://localhost:5432/restaurant_pos"),
                     "1.8.0 is authorized for production database");
+            assertTrue(MigrationApprovalGate.isVersionApprovedForConnection("1.9.0", "jdbc:postgresql://localhost:5432/restaurant_pos"),
+                    "1.9.0 is authorized for production database");
 
             // Preflight validation execution does NOT mutate the allowlist
             Connection mockConn = createCleanMockConnection();
@@ -223,6 +227,7 @@ public class MigrationGateHardeningRegressionTest {
             MigrationPreflightValidator.validateVersion(mockConn, "1.6.0");
             MigrationPreflightValidator.validateVersion(mockConn, "1.7.0");
             MigrationPreflightValidator.validateVersion(mockConn, "1.8.0");
+            MigrationPreflightValidator.validateVersion(mockConn, "1.9.0");
             assertEquals(sizeBefore, MigrationApprovalGate.APPROVED_ALLOWLIST.size(),
                     "Allowlist size must remain strictly unchanged after preflight execution");
         }
@@ -233,18 +238,19 @@ public class MigrationGateHardeningRegressionTest {
     class GateImmutabilityTests {
 
         @Test
-        @DisplayName("APPROVED_ALLOWLIST is strictly immutable and contains exactly the 8 approved versions")
+        @DisplayName("APPROVED_ALLOWLIST is strictly immutable and contains exactly the 9 approved versions")
         void testApprovedAllowlistStrictImmutability() {
             Set<String> allowlist = MigrationApprovalGate.APPROVED_ALLOWLIST;
             assertNotNull(allowlist);
-            assertEquals(8, allowlist.size(), "Allowlist must contain exactly 8 approved versions");
-            assertTrue(allowlist.containsAll(Arrays.asList("1.0.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0")));
+            assertEquals(9, allowlist.size(), "Allowlist must contain exactly 9 approved versions");
+            assertTrue(allowlist.containsAll(Arrays.asList("1.0.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0", "1.9.0")));
             assertFalse(allowlist.contains("1.1.0"), "Draft 1.1.0 must remain strictly excluded");
             assertTrue(allowlist.contains("1.8.0"), "Approved 1.8.0 must be in allowlist");
-            assertFalse(allowlist.contains("1.9.0"), "Future unapproved 1.9.0 must remain strictly excluded");
+            assertTrue(allowlist.contains("1.9.0"), "Approved 1.9.0 must be in allowlist");
             assertFalse(allowlist.contains("2.0.0"), "Future unapproved 2.0.0 must remain strictly excluded");
 
-            assertThrows(UnsupportedOperationException.class, () -> allowlist.add("1.9.0"));
+            assertThrows(UnsupportedOperationException.class, () -> allowlist.add("2.0.0"));
+            assertThrows(UnsupportedOperationException.class, () -> allowlist.remove("1.9.0"));
             assertThrows(UnsupportedOperationException.class, () -> allowlist.remove("1.8.0"));
             assertThrows(UnsupportedOperationException.class, () -> allowlist.remove("1.7.0"));
             assertThrows(UnsupportedOperationException.class, () -> allowlist.remove("1.0.0"));
@@ -269,12 +275,14 @@ public class MigrationGateHardeningRegressionTest {
         }
 
         @Test
-        @DisplayName("Connection authorization strictly rejects unauthorized draft 1.1.0 and future 1.9.0 on live DB")
+        @DisplayName("Connection authorization strictly rejects unauthorized draft 1.1.0 and future 2.0.0 on live DB")
         void testAuthorizationRejectsUnauthorizedVersionsOnLiveDatabase() {
             assertFalse(MigrationApprovalGate.isVersionApprovedForConnection("1.1.0", "jdbc:postgresql://localhost:5432/restaurant_pos"),
                     "Must strictly reject 1.1.0 against live restaurant_pos DB");
-            assertFalse(MigrationApprovalGate.isVersionApprovedForConnection("1.9.0", "jdbc:postgresql://localhost:5432/restaurant_pos"),
-                    "Must strictly reject 1.9.0 against live restaurant_pos DB");
+            assertFalse(MigrationApprovalGate.isVersionApprovedForConnection("2.0.0", "jdbc:postgresql://localhost:5432/restaurant_pos"),
+                    "Must strictly reject 2.0.0 against live restaurant_pos DB");
+            assertTrue(MigrationApprovalGate.isVersionApprovedForConnection("1.9.0", "jdbc:postgresql://localhost:5432/restaurant_pos"),
+                    "Must authorize approved 1.9.0 against live restaurant_pos DB");
             assertFalse(MigrationApprovalGate.isVersionApprovedForConnection(null, "jdbc:postgresql://localhost:5432/restaurant_pos"),
                     "Must strictly reject null version");
             assertFalse(MigrationApprovalGate.isVersionApprovedForConnection("", "jdbc:postgresql://localhost:5432/restaurant_pos"),
@@ -291,8 +299,8 @@ public class MigrationGateHardeningRegressionTest {
                 System.setProperty("flyway.test.isolated.approved", "true");
                 assertFalse(MigrationApprovalGate.isVersionApprovedForConnection("1.1.0", "jdbc:postgresql://localhost:5432/restaurant_pos_migration_test"),
                         "Unauthorized draft 1.1.0 must never be permitted even on test DB");
-                assertFalse(MigrationApprovalGate.isVersionApprovedForConnection("1.9.0", "jdbc:postgresql://localhost:5432/restaurant_pos_migration_test"),
-                        "Unapproved version 1.9.0 must never be permitted even on test DB");
+                assertFalse(MigrationApprovalGate.isVersionApprovedForConnection("2.0.0", "jdbc:postgresql://localhost:5432/restaurant_pos_migration_test"),
+                        "Unapproved version 2.0.0 must never be permitted even on test DB");
             } finally {
                 if (orig == null) System.clearProperty("flyway.test.isolated.approved");
                 else System.setProperty("flyway.test.isolated.approved", orig);

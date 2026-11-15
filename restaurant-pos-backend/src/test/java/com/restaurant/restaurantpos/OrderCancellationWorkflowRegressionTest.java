@@ -134,29 +134,14 @@ public class OrderCancellationWorkflowRegressionTest {
     class KdsEnabledRules {
 
         @Test
-        @DisplayName("Waiter cancels their own NEW order successfully")
-        void testWaiterCancelsOwnNewOrderSuccess() {
+        @DisplayName("Waiter cannot cancel own NEW order (ADMIN-only cancellation)")
+        void testWaiterCannotCancelOwnNewOrder() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
             when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-            when(securityUtils.getCurrentUserId()).thenReturn(101L);
-            when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(kdsEnabledSettings));
 
-            Order order = buildOrder(201L, "NEW", waiter1, table1, "DINE_IN");
-            when(orderRepository.findByIdAndRestaurantId(201L, 1L)).thenReturn(Optional.of(order));
-            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
-            when(userRepository.getReferenceById(101L)).thenReturn(waiter1);
-            when(orderRepository.existsByRestaurantIdAndTableIdAndOrderTypeAndStatusIn(eq(1L), eq(15L), eq("DINE_IN"), anyList()))
-                    .thenReturn(false);
-
-            OrderResponse response = orderService.cancelOrder(201L);
-
-            assertNotNull(response);
-            assertEquals("CANCELLED", response.getStatus());
-            assertEquals("AVAILABLE", table1.getStatus());
-            verify(tableRepository).save(table1);
-            verify(orderStatusHistoryRepository).save(any());
-            verify(eventPublisher).publishOrderStatusChanged(order);
-            verify(notificationService).notifyOrderCancelled(order);
+            AccessDeniedException ex = assertThrows(AccessDeniedException.class, () -> orderService.cancelOrder(201L));
+            assertTrue(ex.getMessage().contains("Only ADMIN can cancel orders"));
+            verify(orderRepository, never()).save(any());
         }
 
         @Test
@@ -164,17 +149,10 @@ public class OrderCancellationWorkflowRegressionTest {
         void testWaiterCannotCancelAcceptedOrder() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
             when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-            when(securityUtils.getCurrentUserId()).thenReturn(101L);
-            when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(kdsEnabledSettings));
 
-            Order order = buildOrder(202L, "ACCEPTED", waiter1, table1, "DINE_IN");
-            when(orderRepository.findByIdAndRestaurantId(202L, 1L)).thenReturn(Optional.of(order));
-
-            RuntimeException ex = assertThrows(RuntimeException.class, () -> orderService.cancelOrder(202L));
-            assertTrue(ex.getMessage().contains("Invalid cancellation status"));
-            assertEquals("ACCEPTED", order.getStatus());
-            verify(tableRepository, never()).save(any());
-            verify(orderStatusHistoryRepository, never()).save(any());
+            AccessDeniedException ex = assertThrows(AccessDeniedException.class, () -> orderService.cancelOrder(202L));
+            assertTrue(ex.getMessage().contains("Only ADMIN can cancel orders"));
+            verify(orderRepository, never()).save(any());
         }
 
         @Test
@@ -182,34 +160,18 @@ public class OrderCancellationWorkflowRegressionTest {
         void testWaiterCannotCancelPreparingOrReadyOrder() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
             when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-            when(securityUtils.getCurrentUserId()).thenReturn(101L);
-            when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(kdsEnabledSettings));
 
-            Order preparingOrder = buildOrder(203L, "PREPARING", waiter1, table1, "DINE_IN");
-            when(orderRepository.findByIdAndRestaurantId(203L, 1L)).thenReturn(Optional.of(preparingOrder));
-
-            assertThrows(RuntimeException.class, () -> orderService.cancelOrder(203L));
-
-            Order readyOrder = buildOrder(204L, "READY", waiter1, table1, "DINE_IN");
-            when(orderRepository.findByIdAndRestaurantId(204L, 1L)).thenReturn(Optional.of(readyOrder));
-
-            assertThrows(RuntimeException.class, () -> orderService.cancelOrder(204L));
+            assertThrows(AccessDeniedException.class, () -> orderService.cancelOrder(203L));
+            assertThrows(AccessDeniedException.class, () -> orderService.cancelOrder(204L));
         }
 
         @Test
-        @DisplayName("Waiter cannot cancel NEW order if a bill already exists (even if KDS enabled)")
+        @DisplayName("Waiter cannot cancel order even if a bill exists")
         void testWaiterCannotCancelOrderWithBillEvenIfKdsEnabled() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
             when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-            when(securityUtils.getCurrentUserId()).thenReturn(101L);
 
-            Order order = buildOrder(205L, "NEW", waiter1, table1, "DINE_IN");
-            when(orderRepository.findByIdAndRestaurantId(205L, 1L)).thenReturn(Optional.of(order));
-            when(billRepository.existsByRestaurantIdAndOrderId(1L, 205L)).thenReturn(true);
-
-            OrderWorkflowConflictException ex = assertThrows(OrderWorkflowConflictException.class,
-                    () -> orderService.cancelOrder(205L));
-            assertTrue(ex.getMessage().contains("bill has already been generated"));
+            assertThrows(AccessDeniedException.class, () -> orderService.cancelOrder(205L));
             verify(orderRepository, never()).save(any());
         }
     }
@@ -219,77 +181,36 @@ public class OrderCancellationWorkflowRegressionTest {
     class KdsDisabledRules {
 
         @Test
-        @DisplayName("Waiter can cancel an unbilled order (NEW status)")
-        void testWaiterCanCancelUnbilledNewOrder() {
+        @DisplayName("Waiter cannot cancel an unbilled order (NEW status) in kitchen-free mode")
+        void testWaiterCannotCancelUnbilledNewOrder() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
             when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-            when(securityUtils.getCurrentUserId()).thenReturn(101L);
-            when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(kdsDisabledSettings));
 
-            Order order = buildOrder(301L, "NEW", waiter1, table1, "DINE_IN");
-            when(orderRepository.findByIdAndRestaurantId(301L, 1L)).thenReturn(Optional.of(order));
-            when(billRepository.existsByRestaurantIdAndOrderId(1L, 301L)).thenReturn(false);
-            when(billRepository.existsByOrderId(301L)).thenReturn(false);
-            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
-            when(userRepository.getReferenceById(101L)).thenReturn(waiter1);
-            when(orderRepository.existsByRestaurantIdAndTableIdAndOrderTypeAndStatusIn(eq(1L), eq(15L), eq("DINE_IN"), anyList()))
-                    .thenReturn(false);
-
-            OrderResponse response = orderService.cancelOrder(301L);
-
-            assertNotNull(response);
-            assertEquals("CANCELLED", response.getStatus());
-            assertEquals("AVAILABLE", table1.getStatus());
-            verify(tableRepository).save(table1);
-            verify(orderStatusHistoryRepository).save(any());
+            AccessDeniedException ex = assertThrows(AccessDeniedException.class, () -> orderService.cancelOrder(301L));
+            assertTrue(ex.getMessage().contains("Only ADMIN can cancel orders"));
+            verify(orderRepository, never()).save(any());
         }
 
         @Test
-        @DisplayName("Waiter can cancel an unbilled order in another active status (ACCEPTED)")
-        void testWaiterCanCancelUnbilledAcceptedOrderInKitchenFreeMode() {
+        @DisplayName("Waiter cannot cancel an unbilled order in another active status (ACCEPTED) in kitchen-free mode")
+        void testWaiterCannotCancelUnbilledAcceptedOrderInKitchenFreeMode() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
             when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-            when(securityUtils.getCurrentUserId()).thenReturn(101L);
-            when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(kdsDisabledSettings));
 
-            Order order = buildOrder(302L, "ACCEPTED", waiter1, table1, "DINE_IN");
-            when(orderRepository.findByIdAndRestaurantId(302L, 1L)).thenReturn(Optional.of(order));
-            when(billRepository.existsByRestaurantIdAndOrderId(1L, 302L)).thenReturn(false);
-            when(billRepository.existsByOrderId(302L)).thenReturn(false);
-            when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
-            when(userRepository.getReferenceById(101L)).thenReturn(waiter1);
-            when(orderRepository.existsByRestaurantIdAndTableIdAndOrderTypeAndStatusIn(eq(1L), eq(15L), eq("DINE_IN"), anyList()))
-                    .thenReturn(false);
-
-            OrderResponse response = orderService.cancelOrder(302L);
-
-            assertNotNull(response);
-            assertEquals("CANCELLED", response.getStatus());
-            assertEquals("AVAILABLE", table1.getStatus());
-            verify(tableRepository).save(table1);
+            AccessDeniedException ex = assertThrows(AccessDeniedException.class, () -> orderService.cancelOrder(302L));
+            assertTrue(ex.getMessage().contains("Only ADMIN can cancel orders"));
+            verify(orderRepository, never()).save(any());
         }
 
         @Test
-        @DisplayName("Waiter cannot cancel an order with a saved bill (even if status is NEW)")
+        @DisplayName("Waiter cannot cancel an order with a saved bill in kitchen-free mode")
         void testWaiterCannotCancelBilledOrder() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
             when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-            when(securityUtils.getCurrentUserId()).thenReturn(101L);
-            when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(kdsDisabledSettings));
 
-            Order order = buildOrder(303L, "NEW", waiter1, table1, "DINE_IN");
-            table1.setStatus("BILLING");
-            when(orderRepository.findByIdAndRestaurantId(303L, 1L)).thenReturn(Optional.of(order));
-            when(billRepository.existsByRestaurantIdAndOrderId(1L, 303L)).thenReturn(true);
-
-            OrderWorkflowConflictException ex = assertThrows(OrderWorkflowConflictException.class,
-                    () -> orderService.cancelOrder(303L));
-
-            assertTrue(ex.getMessage().contains("bill has already been generated"));
-            assertEquals("NEW", order.getStatus());
-            assertEquals("BILLING", table1.getStatus());
-            verify(tableRepository, never()).save(any());
-            verify(orderStatusHistoryRepository, never()).save(any());
+            AccessDeniedException ex = assertThrows(AccessDeniedException.class, () -> orderService.cancelOrder(303L));
+            assertTrue(ex.getMessage().contains("Only ADMIN can cancel orders"));
+            verify(orderRepository, never()).save(any());
         }
     }
 
@@ -302,22 +223,19 @@ public class OrderCancellationWorkflowRegressionTest {
         void testWaiterCannotCancelOtherWaitersOrder() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
             when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-            when(securityUtils.getCurrentUserId()).thenReturn(101L); // Waiter 1
-
-            Order order = buildOrder(401L, "NEW", waiter2, table1, "DINE_IN"); // Belonging to Waiter 2
-            when(orderRepository.findByIdAndRestaurantId(401L, 1L)).thenReturn(Optional.of(order));
 
             AccessDeniedException ex = assertThrows(AccessDeniedException.class,
                     () -> orderService.cancelOrder(401L));
 
-            assertTrue(ex.getMessage().contains("You can only cancel your own orders"));
+            assertTrue(ex.getMessage().contains("Only ADMIN can cancel orders"));
             verify(orderRepository, never()).save(any());
         }
 
         @Test
-        @DisplayName("Waiter cannot cancel an order belonging to another restaurant")
-        void testWaiterCannotCancelOtherRestaurantOrder() {
+        @DisplayName("Admin cannot cancel an order belonging to another restaurant")
+        void testAdminCannotCancelOtherRestaurantOrder() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
+            when(securityUtils.getCurrentUserRole()).thenReturn("ADMIN");
 
             Order otherTenantOrder = new Order();
             otherTenantOrder.setId(402L);
@@ -433,14 +351,13 @@ public class OrderCancellationWorkflowRegressionTest {
         @DisplayName("Cancelling order releases table ONLY when no other active order uses it")
         void testTableNotReleasedWhenOtherActiveOrderRemains() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
-            when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-            when(securityUtils.getCurrentUserId()).thenReturn(101L);
-            when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(kdsEnabledSettings));
+            when(securityUtils.getCurrentUserRole()).thenReturn("ADMIN");
+            when(securityUtils.getCurrentUserId()).thenReturn(10L);
 
             Order orderA = buildOrder(601L, "NEW", waiter1, table1, "DINE_IN");
             when(orderRepository.findByIdAndRestaurantId(601L, 1L)).thenReturn(Optional.of(orderA));
             when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
-            when(userRepository.getReferenceById(101L)).thenReturn(waiter1);
+            when(userRepository.getReferenceById(10L)).thenReturn(adminUser);
 
             // Another order still exists on table 1!
             when(orderRepository.existsByRestaurantIdAndTableIdAndOrderTypeAndStatusIn(eq(1L), eq(15L), eq("DINE_IN"), anyList()))
@@ -459,14 +376,13 @@ public class OrderCancellationWorkflowRegressionTest {
         @DisplayName("Takeaway orders cancel without attempting table release")
         void testTakeawayOrderCancellation() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
-            when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
-            when(securityUtils.getCurrentUserId()).thenReturn(101L);
-            when(settingsRepository.findByRestaurantId(1L)).thenReturn(Optional.of(kdsEnabledSettings));
+            when(securityUtils.getCurrentUserRole()).thenReturn("ADMIN");
+            when(securityUtils.getCurrentUserId()).thenReturn(10L);
 
             Order takeawayOrder = buildOrder(602L, "NEW", waiter1, null, "TAKEAWAY");
             when(orderRepository.findByIdAndRestaurantId(602L, 1L)).thenReturn(Optional.of(takeawayOrder));
             when(orderRepository.save(any(Order.class))).thenAnswer(i -> i.getArgument(0));
-            when(userRepository.getReferenceById(101L)).thenReturn(waiter1);
+            when(userRepository.getReferenceById(10L)).thenReturn(adminUser);
 
             OrderResponse response = orderService.cancelOrder(602L);
 
@@ -484,7 +400,7 @@ public class OrderCancellationWorkflowRegressionTest {
         @DisplayName("Cancelling an already CANCELLED order is rejected safely with conflict")
         void testDuplicateCancellationRejected() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
-            when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
+            when(securityUtils.getCurrentUserRole()).thenReturn("ADMIN");
 
             Order cancelledOrder = buildOrder(701L, "CANCELLED", waiter1, table1, "DINE_IN");
             when(orderRepository.findByIdAndRestaurantId(701L, 1L)).thenReturn(Optional.of(cancelledOrder));
@@ -501,7 +417,7 @@ public class OrderCancellationWorkflowRegressionTest {
         @DisplayName("Cancelling a COMPLETED order is rejected safely")
         void testCompletedOrderCancellationRejected() {
             when(securityUtils.getCurrentRestaurantId()).thenReturn(1L);
-            when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
+            when(securityUtils.getCurrentUserRole()).thenReturn("ADMIN");
 
             Order completedOrder = buildOrder(702L, "COMPLETED", waiter1, table1, "DINE_IN");
             when(orderRepository.findByIdAndRestaurantId(702L, 1L)).thenReturn(Optional.of(completedOrder));

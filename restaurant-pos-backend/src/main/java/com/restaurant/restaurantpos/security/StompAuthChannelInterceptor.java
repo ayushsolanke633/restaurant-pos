@@ -80,17 +80,24 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
 
             if (authorization != null && !authorization.isEmpty()) {
                 String authHeader = authorization.get(0);
-                if (authHeader.startsWith("Bearer ")) {
-                    token = authHeader.substring(7);
+                if (authHeader != null && authHeader.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                    token = authHeader.substring(7).trim();
+                } else if (authHeader != null && !authHeader.isBlank()) {
+                    token = authHeader.trim();
                 }
             } else {
                 List<String> passcodes = accessor.getNativeHeader("passcode");
                 if (passcodes != null && !passcodes.isEmpty()) {
-                    token = passcodes.get(0);
+                    String raw = passcodes.get(0);
+                    if (raw != null && raw.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                        token = raw.substring(7).trim();
+                    } else if (raw != null && !raw.isBlank()) {
+                        token = raw.trim();
+                    }
                 }
             }
 
-            if (token != null) {
+            if (token != null && !token.isBlank()) {
                 try {
                     String jti = jwtService.extractJti(token);
                     if (jti == null || jti.trim().isEmpty() || tokenRevocationService.isRevoked(jti)) {
@@ -100,7 +107,7 @@ public class StompAuthChannelInterceptor implements ChannelInterceptor {
                     String userEmail = jwtService.extractUsername(token);
                     if (userEmail != null) {
                         UserDetails userDetails = userDetailsService.loadUserByUsername(userEmail);
-                        if (jwtService.isTokenValid(token, userDetails) && isSessionValid(userDetails, token)) {
+                        if (jwtService.isTokenValid(token, userDetails) && isSessionValid(userDetails, token) && userDetails.isEnabled()) {
                             if (userDetails instanceof CustomUserDetails cud && cud.getRestaurantId() != null) {
                                 if (restaurantWebSocketSessionManager != null && restaurantWebSocketSessionManager.isRestaurantDeactivated(cud.getRestaurantId())) {
                                     log.warn("CONNECT rejected: restaurant {} is deactivated", cud.getRestaurantId());

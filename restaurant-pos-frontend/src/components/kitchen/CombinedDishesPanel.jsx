@@ -6,13 +6,13 @@ export const CombinedDishesPanel = ({ orders }) => {
 
   const combinedDishes = calculateCombinedDishes(orders);
 
-  const toggleExpand = (menuItemId) => {
+  const toggleExpand = (id) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(menuItemId)) {
-        next.delete(menuItemId);
+      if (next.has(id)) {
+        next.delete(id);
       } else {
-        next.add(menuItemId);
+        next.add(id);
       }
       return next;
     });
@@ -22,7 +22,7 @@ export const CombinedDishesPanel = ({ orders }) => {
     if (expandedIds.size === combinedDishes.length) {
       setExpandedIds(new Set());
     } else {
-      setExpandedIds(new Set(combinedDishes.map((d) => d.menuItemId)));
+      setExpandedIds(new Set(combinedDishes.map((d) => d.key || d.menuItemId)));
     }
   };
 
@@ -55,18 +55,19 @@ export const CombinedDishesPanel = ({ orders }) => {
           </div>
         ) : (
           combinedDishes.map((dish) => {
-            const isExpanded = expandedIds.has(dish.menuItemId);
+            const dishKey = dish.key || dish.menuItemId || dish.menuItemName;
+            const isExpanded = expandedIds.has(dishKey);
             return (
-              <div key={dish.menuItemId || dish.menuItemName} className="combined-dish-card">
+              <div key={dishKey} className="combined-dish-card">
                 {/* Main Card Summary */}
                 <div
                   className="combined-card-header"
-                  onClick={() => toggleExpand(dish.menuItemId)}
+                  onClick={() => toggleExpand(dishKey)}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
-                      toggleExpand(dish.menuItemId);
+                      toggleExpand(dishKey);
                     }
                   }}
                 >

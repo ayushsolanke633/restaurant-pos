@@ -106,7 +106,9 @@ export const KitchenOrderCard = ({ order, onStatusTransition }) => {
             <div key={item.id || idx} className="kds-item-row">
               <span className="kds-item-qty">{item.quantity}x</span>
               <div className="kds-item-details">
-                <span className="kds-item-name">{item.menuItemName}</span>
+                <span className="kds-item-name">
+                  {item.menuItemName}{item.variationName ? ` (${item.variationName})` : ''}
+                </span>
                 {item.notes && <span className="kds-item-note font-bold">Note: {item.notes}</span>}
               </div>
             </div>

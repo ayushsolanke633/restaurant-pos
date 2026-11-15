@@ -11,6 +11,7 @@ import { CURRENCY_SYMBOL } from '../../utils/constants';
 
 export const OrdersPage = () => {
   const { user } = useAuth();
+  const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN';
   const restaurantId = user?.restaurantId;
   const wsClientRef = useRef(null);
 
@@ -150,7 +151,9 @@ export const OrdersPage = () => {
         const matchesItemName =
           Array.isArray(order.items) &&
           order.items.some(
-            (i) => i.menuItemName && i.menuItemName.toLowerCase().includes(term)
+            (i) =>
+              (i.menuItemName && i.menuItemName.toLowerCase().includes(term)) ||
+              (i.variationName && i.variationName.toLowerCase().includes(term))
           );
         matchesSearch = matchesId || matchesTable || matchesItemName;
       }
@@ -247,8 +250,13 @@ export const OrdersPage = () => {
     }
   };
 
-  // Handle Cancel Order (Allowed when status === 'NEW' or 'ACCEPTED')
+  // Handle Cancel Order (Allowed for ADMIN when status === 'NEW' or 'ACCEPTED')
   const handleCancelOrder = async (order) => {
+    if (!isAdmin) {
+      setError('Access Denied: Only ADMIN can cancel orders.');
+      return;
+    }
+
     if (
       !window.confirm(
         `Are you sure you want to CANCEL Order #${order.id}?`
@@ -268,7 +276,9 @@ export const OrdersPage = () => {
       );
       setSuccessMsg(`Order #${cancelled.id} has been CANCELLED.`);
     } catch (err) {
-      if (err.response) {
+      if (err.response?.status === 403) {
+        setError('Access Denied: Only ADMIN can cancel orders.');
+      } else if (err.response) {
         setError(err.response.data?.message || 'Failed to cancel order.');
       } else {
         setError('Unable to connect to server. Please try again.');
@@ -319,7 +329,7 @@ export const OrdersPage = () => {
   // Helper summary of items in row
   const getItemsSummary = (items) => {
     if (!Array.isArray(items) || items.length === 0) return 'No items';
-    const names = items.map((i) => `${i.quantity}x ${i.menuItemName || 'Item'}`);
+    const names = items.map((i) => `${i.quantity}x ${i.menuItemName || 'Item'}${i.variationName ? ` (${i.variationName})` : ''}`);
     if (names.length <= 2) return names.join(', ');
     return `${names.slice(0, 2).join(', ')} +${names.length - 2} more`;
   };
@@ -545,8 +555,8 @@ export const OrdersPage = () => {
                             </button>
                           )}
 
-                          {/* Cancel action allowed ONLY when status === 'NEW' or 'ACCEPTED' */}
-                          {isCancelable && (
+                          {/* Cancel action allowed ONLY for ADMIN when status === 'NEW' or 'ACCEPTED' */}
+                          {isAdmin && isCancelable && (
                             <button
                               className="btn-action btn-deactivate"
                               onClick={() => handleCancelOrder(ord)}

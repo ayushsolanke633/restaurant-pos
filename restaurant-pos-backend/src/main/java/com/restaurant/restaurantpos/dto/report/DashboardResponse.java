@@ -17,9 +17,36 @@ import java.time.LocalDate;
 public class DashboardResponse {
 
     private LocalDate date;
+
+    /**
+     * Total distinct orders created on this date (based on order.createdAt).
+     */
     private Long totalOrders;
+
+    /**
+     * Total distinct orders whose payment was successfully settled (PAID) on this date (based on payment.paidAt).
+     */
+    private Long ordersSettled;
+
+    /**
+     * Total bills generated on this date (based on bill.createdAt).
+     */
+    private Long billsGenerated;
+
+    /**
+     * Legacy metric: count of orders created on this date that currently have status COMPLETED.
+     * Note: Avoid using as a substitute for settled orders; does not reflect older orders settled today.
+     */
     private Long completedOrders;
+
+    /**
+     * Count of orders created on this date that currently have status CANCELLED.
+     */
     private Long cancelledOrders;
+
+    /**
+     * Count of orders created on this date that are in pending statuses (NEW, ACCEPTED, PREPARING).
+     */
     private Long pendingOrders;
     private BigDecimal totalRevenue;
     private BigDecimal totalTax;

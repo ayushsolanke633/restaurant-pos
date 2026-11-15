@@ -6,6 +6,7 @@ import com.restaurant.restaurantpos.dto.OrderRequest;
 import com.restaurant.restaurantpos.dto.OrderResponse;
 import com.restaurant.restaurantpos.entity.Customer;
 import com.restaurant.restaurantpos.entity.MenuItem;
+import com.restaurant.restaurantpos.entity.MenuItemVariation;
 import com.restaurant.restaurantpos.entity.Order;
 import com.restaurant.restaurantpos.entity.OrderItem;
 import com.restaurant.restaurantpos.entity.OrderStatusHistory;
@@ -14,6 +15,7 @@ import com.restaurant.restaurantpos.entity.User;
 import com.restaurant.restaurantpos.repository.BillRepository;
 import com.restaurant.restaurantpos.repository.CustomerRepository;
 import com.restaurant.restaurantpos.repository.MenuItemRepository;
+import com.restaurant.restaurantpos.repository.MenuItemVariationRepository;
 import com.restaurant.restaurantpos.repository.OrderItemRepository;
 import com.restaurant.restaurantpos.repository.OrderRepository;
 import com.restaurant.restaurantpos.repository.OrderStatusHistoryRepository;
@@ -33,6 +35,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -61,6 +65,7 @@ public class OrderService {
     private final NotificationService notificationService;
     private final BillRepository billRepository;
     private final RestaurantSettingsRepository settingsRepository;
+    private final MenuItemVariationRepository menuItemVariationRepository;
 
     public OrderService(
             OrderRepository orderRepository,
@@ -78,7 +83,27 @@ public class OrderService {
         this(orderRepository, orderItemRepository, orderStatusHistoryRepository,
              restaurantRepository, tableRepository, menuItemRepository, userRepository,
              customerRepository, securityUtils, eventPublisher, notificationService,
-             billRepository, null);
+             billRepository, null, null);
+    }
+
+    public OrderService(
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            OrderStatusHistoryRepository orderStatusHistoryRepository,
+            RestaurantRepository restaurantRepository,
+            RestaurantTableRepository tableRepository,
+            MenuItemRepository menuItemRepository,
+            UserRepository userRepository,
+            CustomerRepository customerRepository,
+            SecurityUtils securityUtils,
+            KitchenOrderEventPublisher eventPublisher,
+            NotificationService notificationService,
+            BillRepository billRepository,
+            RestaurantSettingsRepository settingsRepository) {
+        this(orderRepository, orderItemRepository, orderStatusHistoryRepository,
+             restaurantRepository, tableRepository, menuItemRepository, userRepository,
+             customerRepository, securityUtils, eventPublisher, notificationService,
+             billRepository, settingsRepository, null);
     }
 
     @Autowired
@@ -95,7 +120,8 @@ public class OrderService {
             KitchenOrderEventPublisher eventPublisher,
             NotificationService notificationService,
             BillRepository billRepository,
-            RestaurantSettingsRepository settingsRepository) {
+            RestaurantSettingsRepository settingsRepository,
+            MenuItemVariationRepository menuItemVariationRepository) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
@@ -109,6 +135,7 @@ public class OrderService {
         this.notificationService = notificationService;
         this.billRepository = billRepository;
         this.settingsRepository = settingsRepository;
+        this.menuItemVariationRepository = menuItemVariationRepository;
     }
 
     @Transactional
@@ -196,7 +223,7 @@ public class OrderService {
             customer = findCustomerScoped(request.getCustomerId(), restaurantId);
         }
 
-        Map<Long, DeduplicatedItem> itemMap = deduplicateItems(request.getItems());
+        Map<ItemKey, DeduplicatedItem> itemMap = deduplicateItems(request.getItems());
 
         BigDecimal subtotal = BigDecimal.ZERO;
         List<OrderItem> orderItemsToSave = new ArrayList<>();
@@ -212,13 +239,16 @@ public class OrderService {
                 throw new RuntimeException("This category is inactive. Please refresh the menu and try again.");
             }
 
-            BigDecimal unitPrice = menuItem.getPrice();
+            ResolvedItemPrice resolved = resolveItemPriceAndVariation(menuItem, item.variationId, restaurantId);
+            BigDecimal unitPrice = resolved.price;
             BigDecimal itemSubtotal = unitPrice.multiply(BigDecimal.valueOf(item.quantity));
             subtotal = subtotal.add(itemSubtotal);
 
             OrderItem orderItem = new OrderItem();
             orderItem.setRestaurant(restaurantRepository.getReferenceById(restaurantId));
             orderItem.setMenuItem(menuItem);
+            orderItem.setVariation(resolved.variation);
+            orderItem.setVariationName(resolved.variationName);
             orderItem.setQuantity(item.quantity);
             orderItem.setUnitPrice(unitPrice);
             orderItem.setNotes(item.notes);
@@ -427,12 +457,48 @@ public class OrderService {
             throw new AccessDeniedException("Access denied: Cannot change table assignment of an existing order");
         }
 
+        // Bill and payment restrictions
+        boolean billExists = (billRepository != null) &&
+                (billRepository.existsByRestaurantIdAndOrderId(restaurantId, order.getId())
+                        || billRepository.existsByOrderId(order.getId()));
+        if (billExists) {
+            throw new RuntimeException("Cannot modify order because a bill has already been generated for this order");
+        }
+
         if (request.getCustomerId() != null) {
             Customer customer = findCustomerScoped(request.getCustomerId(), restaurantId);
             order.setCustomer(customer);
         }
 
-        Map<Long, DeduplicatedItem> itemMap = deduplicateItems(request.getItems());
+        if (request.getItems() == null || request.getItems().isEmpty()) {
+            throw new RuntimeException("Order items list cannot be empty");
+        }
+
+        Map<ItemKey, DeduplicatedItem> itemMap = deduplicateItems(request.getItems());
+
+        // Authorization: Only ADMIN can delete order items or decrease existing quantities
+        List<OrderItem> existingItems = findOrderItemsScoped(id, restaurantId);
+        Map<ItemKey, Integer> existingItemQuantities = existingItems.stream()
+                .filter(item -> item.getMenuItem() != null && item.getMenuItem().getId() != null)
+                .collect(Collectors.groupingBy(
+                        item -> new ItemKey(item.getMenuItem().getId(), item.getVariation() != null ? item.getVariation().getId() : null),
+                        Collectors.summingInt(item -> item.getQuantity() != null ? item.getQuantity() : 0)
+                ));
+
+        if (!"ADMIN".equalsIgnoreCase(currentRole)) {
+            for (Map.Entry<ItemKey, Integer> entry : existingItemQuantities.entrySet()) {
+                ItemKey itemKey = entry.getKey();
+                int existingQty = entry.getValue();
+
+                DeduplicatedItem requestedItem = itemMap.get(itemKey);
+                if (requestedItem == null || requestedItem.quantity <= 0) {
+                    throw new AccessDeniedException("Access denied: Only ADMIN can delete order items");
+                } else if (requestedItem.quantity < existingQty) {
+                    throw new AccessDeniedException("Access denied: Only ADMIN can decrease order item quantities");
+                }
+            }
+        }
+
         BigDecimal subtotal = BigDecimal.ZERO;
         List<OrderItem> orderItemsToSave = new ArrayList<>();
 
@@ -447,7 +513,8 @@ public class OrderService {
                 throw new RuntimeException("This category is inactive. Please refresh the menu and try again.");
             }
 
-            BigDecimal unitPrice = menuItem.getPrice();
+            ResolvedItemPrice resolved = resolveItemPriceAndVariation(menuItem, item.variationId, restaurantId);
+            BigDecimal unitPrice = resolved.price;
             BigDecimal itemSubtotal = unitPrice.multiply(BigDecimal.valueOf(item.quantity));
             subtotal = subtotal.add(itemSubtotal);
 
@@ -455,6 +522,8 @@ public class OrderService {
             orderItem.setRestaurant(order.getRestaurant());
             orderItem.setOrder(order);
             orderItem.setMenuItem(menuItem);
+            orderItem.setVariation(resolved.variation);
+            orderItem.setVariationName(resolved.variationName);
             orderItem.setQuantity(item.quantity);
             orderItem.setUnitPrice(unitPrice);
             orderItem.setNotes(item.notes);
@@ -548,11 +617,14 @@ public class OrderService {
                     throw new RuntimeException("This category is inactive. Please refresh the menu and try again.");
                 }
 
-                BigDecimal unitPrice = menuItem.getPrice();
+                ResolvedItemPrice resolved = resolveItemPriceAndVariation(menuItem, req.getVariationId(), restaurantId);
+                BigDecimal unitPrice = resolved.price;
                 String notes = (req.getNotes() != null && !req.getNotes().isBlank()) ? req.getNotes().trim() : null;
 
                 Optional<OrderItem> newMatch = itemsToSave.stream()
-                        .filter(oi -> oi.getMenuItem().getId().equals(menuItem.getId()) && notesMatch(oi.getNotes(), notes))
+                        .filter(oi -> oi.getMenuItem().getId().equals(menuItem.getId())
+                                && Objects.equals(oi.getVariation() != null ? oi.getVariation().getId() : null, req.getVariationId())
+                                && notesMatch(oi.getNotes(), notes))
                         .findFirst();
 
                 if (newMatch.isPresent()) {
@@ -564,6 +636,8 @@ public class OrderService {
                     newItem.setRestaurant(order.getRestaurant());
                     newItem.setOrder(order);
                     newItem.setMenuItem(menuItem);
+                    newItem.setVariation(resolved.variation);
+                    newItem.setVariationName(resolved.variationName);
                     newItem.setQuantity(req.getQuantity());
                     newItem.setUnitPrice(unitPrice);
                     newItem.setNotes(notes);
@@ -589,11 +663,14 @@ public class OrderService {
                     throw new RuntimeException("This category is inactive. Please refresh the menu and try again.");
                 }
 
-                BigDecimal unitPrice = menuItem.getPrice();
+                ResolvedItemPrice resolved = resolveItemPriceAndVariation(menuItem, req.getVariationId(), restaurantId);
+                BigDecimal unitPrice = resolved.price;
                 String notes = (req.getNotes() != null && !req.getNotes().isBlank()) ? req.getNotes().trim() : null;
 
                 Optional<OrderItem> existingMatch = existingItems.stream()
-                        .filter(oi -> oi.getMenuItem().getId().equals(menuItem.getId()) && notesMatch(oi.getNotes(), notes))
+                        .filter(oi -> oi.getMenuItem().getId().equals(menuItem.getId())
+                                && Objects.equals(oi.getVariation() != null ? oi.getVariation().getId() : null, req.getVariationId())
+                                && notesMatch(oi.getNotes(), notes))
                         .findFirst();
 
                 if (existingMatch.isPresent()) {
@@ -605,7 +682,9 @@ public class OrderService {
                     }
                 } else {
                     Optional<OrderItem> newMatch = itemsToSave.stream()
-                            .filter(oi -> oi.getMenuItem().getId().equals(menuItem.getId()) && notesMatch(oi.getNotes(), notes))
+                            .filter(oi -> oi.getMenuItem().getId().equals(menuItem.getId())
+                                    && Objects.equals(oi.getVariation() != null ? oi.getVariation().getId() : null, req.getVariationId())
+                                    && notesMatch(oi.getNotes(), notes))
                             .findFirst();
 
                     if (newMatch.isPresent()) {
@@ -617,6 +696,8 @@ public class OrderService {
                         newItem.setRestaurant(order.getRestaurant());
                         newItem.setOrder(order);
                         newItem.setMenuItem(menuItem);
+                        newItem.setVariation(resolved.variation);
+                        newItem.setVariationName(resolved.variationName);
                         newItem.setQuantity(req.getQuantity());
                         newItem.setUnitPrice(unitPrice);
                         newItem.setNotes(notes);
@@ -721,8 +802,8 @@ public class OrderService {
             throw new AccessDeniedException("Restaurant context required");
         }
 
-        if ("KITCHEN".equalsIgnoreCase(currentRole)) {
-            throw new AccessDeniedException("Access denied");
+        if (!"ADMIN".equalsIgnoreCase(currentRole)) {
+            throw new AccessDeniedException("Access denied: Only ADMIN can cancel orders");
         }
 
         Order order = findOrderScoped(id, restaurantId);
@@ -740,8 +821,6 @@ public class OrderService {
             throw new OrderWorkflowConflictException("Invalid cancellation status: Completed order cannot be cancelled");
         }
 
-        boolean kitchenEnabled = isKitchenModeEnabled(restaurantId);
-
         // Reject cancellation if a bill already exists for the order
         boolean billExists = (billRepository != null) &&
                 (billRepository.existsByRestaurantIdAndOrderId(restaurantId, order.getId())
@@ -750,32 +829,8 @@ public class OrderService {
             throw new OrderWorkflowConflictException("Cannot cancel order: bill has already been generated");
         }
 
-        if ("ADMIN".equalsIgnoreCase(currentRole)) {
-            if (!"NEW".equalsIgnoreCase(currentStatus) && !"ACCEPTED".equalsIgnoreCase(currentStatus)) {
-                throw new OrderWorkflowConflictException("Invalid cancellation status");
-            }
-        } else if ("WAITER".equalsIgnoreCase(currentRole)) {
-            if (order.getWaiter() == null || !order.getWaiter().getId().equals(currentUserId)) {
-                throw new AccessDeniedException("Access denied: You can only cancel your own orders");
-            }
-
-            if (kitchenEnabled) {
-                if (!"NEW".equalsIgnoreCase(currentStatus)) {
-                    throw new OrderWorkflowConflictException("Invalid cancellation status: Order cannot be cancelled after kitchen acceptance");
-                }
-                List<OrderItem> currentItems = findOrderItemsScoped(id, restaurantId);
-                boolean anyProgressed = currentItems.stream().anyMatch(i -> i.getStatus() != null && !"NEW".equalsIgnoreCase(i.getStatus()));
-                if (anyProgressed) {
-                    throw new OrderWorkflowConflictException("Invalid cancellation status: Order cannot be cancelled after kitchen acceptance");
-                }
-            } else {
-                List<String> activeStatuses = Arrays.asList("NEW", "ACCEPTED", "PREPARING", "READY");
-                if (!activeStatuses.contains(currentStatus != null ? currentStatus.toUpperCase() : "")) {
-                    throw new OrderWorkflowConflictException("Invalid cancellation status");
-                }
-            }
-        } else {
-            throw new AccessDeniedException("Access denied");
+        if (!"NEW".equalsIgnoreCase(currentStatus) && !"ACCEPTED".equalsIgnoreCase(currentStatus)) {
+            throw new OrderWorkflowConflictException("Invalid cancellation status");
         }
 
         order.setStatus("CANCELLED");
@@ -837,12 +892,102 @@ public class OrderService {
         orderStatusHistoryRepository.save(history);
     }
 
-    private Map<Long, DeduplicatedItem> deduplicateItems(List<OrderItemRequest> itemRequests) {
-        Map<Long, DeduplicatedItem> map = new LinkedHashMap<>();
+    private static class ItemKey {
+        private final Long menuItemId;
+        private final Long variationId;
+
+        public ItemKey(Long menuItemId, Long variationId) {
+            this.menuItemId = menuItemId;
+            this.variationId = variationId;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            ItemKey itemKey = (ItemKey) o;
+            return Objects.equals(menuItemId, itemKey.menuItemId) &&
+                    Objects.equals(variationId, itemKey.variationId);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(menuItemId, variationId);
+        }
+    }
+
+    private static class DeduplicatedItem {
+        Long menuItemId;
+        Long variationId;
+        int quantity;
+        String notes;
+
+        DeduplicatedItem(Long menuItemId, Long variationId, int quantity, String notes) {
+            this.menuItemId = menuItemId;
+            this.variationId = variationId;
+            this.quantity = quantity;
+            this.notes = notes;
+        }
+    }
+
+    private static class ResolvedItemPrice {
+        final BigDecimal price;
+        final MenuItemVariation variation;
+        final String variationName;
+
+        ResolvedItemPrice(BigDecimal price, MenuItemVariation variation, String variationName) {
+            this.price = price;
+            this.variation = variation;
+            this.variationName = variationName;
+        }
+    }
+
+    private ResolvedItemPrice resolveItemPriceAndVariation(MenuItem menuItem, Long variationId, Long restaurantId) {
+        List<MenuItemVariation> itemVariations = (menuItemVariationRepository != null && menuItem.getId() != null)
+                ? menuItemVariationRepository.findByMenuItemIdAndRestaurantIdOrderBySortOrderAscIdAsc(menuItem.getId(), restaurantId)
+                : Collections.emptyList();
+
+        if (variationId != null) {
+            if (menuItemVariationRepository == null) {
+                throw new RuntimeException("Variation support not available");
+            }
+            MenuItemVariation variation = menuItemVariationRepository
+                    .findByIdAndMenuItemIdAndRestaurantId(variationId, menuItem.getId(), restaurantId)
+                    .orElseThrow(() -> new RuntimeException("Variation not found for menu item: " + menuItem.getName()));
+
+            if (!Boolean.TRUE.equals(variation.getIsAvailable())) {
+                throw new RuntimeException("Selected variation is not available: " + variation.getName());
+            }
+
+            return new ResolvedItemPrice(variation.getPrice(), variation, variation.getName());
+        }
+
+        if (itemVariations != null && !itemVariations.isEmpty()) {
+            if (itemVariations.size() > 1) {
+                throw new RuntimeException("Please select a variation for menu item: " + menuItem.getName());
+            }
+            MenuItemVariation single = itemVariations.get(0);
+            if (!Boolean.TRUE.equals(single.getIsAvailable())) {
+                throw new RuntimeException("Selected variation is not available: " + single.getName());
+            }
+            return new ResolvedItemPrice(single.getPrice(), single, single.getName());
+        }
+
+        return new ResolvedItemPrice(menuItem.getPrice(), null, null);
+    }
+
+    private Map<ItemKey, DeduplicatedItem> deduplicateItems(List<OrderItemRequest> itemRequests) {
+        Map<ItemKey, DeduplicatedItem> map = new LinkedHashMap<>();
+        if (itemRequests == null) {
+            return map;
+        }
         for (OrderItemRequest req : itemRequests) {
-            Long menuItemId = req.getMenuItemId();
-            if (map.containsKey(menuItemId)) {
-                DeduplicatedItem existing = map.get(menuItemId);
+            if (req.getQuantity() == null || req.getQuantity() <= 0) {
+                throw new RuntimeException("Quantity must be greater than 0");
+            }
+            ItemKey key = new ItemKey(req.getMenuItemId(), req.getVariationId());
+            if (map.containsKey(key)) {
+                DeduplicatedItem existing = map.get(key);
                 existing.quantity += req.getQuantity();
                 if (req.getNotes() != null && !req.getNotes().isBlank()) {
                     if (existing.notes == null || existing.notes.isBlank()) {
@@ -852,22 +997,10 @@ public class OrderService {
                     }
                 }
             } else {
-                map.put(menuItemId, new DeduplicatedItem(menuItemId, req.getQuantity(), req.getNotes()));
+                map.put(key, new DeduplicatedItem(req.getMenuItemId(), req.getVariationId(), req.getQuantity(), req.getNotes()));
             }
         }
         return map;
-    }
-
-    private static class DeduplicatedItem {
-        Long menuItemId;
-        int quantity;
-        String notes;
-
-        DeduplicatedItem(Long menuItemId, int quantity, String notes) {
-            this.menuItemId = menuItemId;
-            this.quantity = quantity;
-            this.notes = notes;
-        }
     }
 
     private OrderResponse mapToResponse(Order order, List<OrderItem> items) {
@@ -876,6 +1009,8 @@ public class OrderService {
                         .id(i.getId())
                         .menuItemId(i.getMenuItem() != null ? i.getMenuItem().getId() : null)
                         .menuItemName(i.getMenuItem() != null ? i.getMenuItem().getName() : null)
+                        .variationId(i.getVariation() != null ? i.getVariation().getId() : null)
+                        .variationName(i.getVariationName() != null ? i.getVariationName() : (i.getVariation() != null ? i.getVariation().getName() : null))
                         .quantity(i.getQuantity())
                         .unitPrice(i.getUnitPrice())
                         .notes(i.getNotes())

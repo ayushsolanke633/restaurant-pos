@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import '../storage/secure_storage_service.dart';
+import '../utils/jwt_decoder.dart';
 import 'backend_url_resolver.dart';
 
 class WebSocketService {
@@ -86,6 +87,16 @@ class WebSocketService {
         debugPrint('[WAITER WS] Token absent, skipping connection');
       }
       _isConnecting = false;
+      return;
+    }
+
+    if (JwtDecoder.isExpired(token)) {
+      if (kDebugMode) {
+        debugPrint('[WAITER WS] Token expired, halting connection and clearing session');
+      }
+      _isConnecting = false;
+      await disconnect();
+      await _storageService.clearSession();
       return;
     }
 
@@ -184,6 +195,21 @@ class WebSocketService {
             'SUBSCRIBE\nid:sub-0\ndestination:$destination\n\n\x00';
         _socket?.add(subscribeFrame);
         debugPrint('[WAITER WS DEBUG]\nSUBSCRIBED');
+      }
+    } else if (text.startsWith('ERROR')) {
+      debugPrint('[WAITER WS DEBUG]\nSTOMP ERROR FRAME RECEIVED');
+      final lower = text.toLowerCase();
+      final isAuthError = lower.contains('access denied') ||
+          lower.contains('unauthenticated') ||
+          lower.contains('revoked') ||
+          lower.contains('expired') ||
+          lower.contains('unauthorized');
+
+      if (isAuthError) {
+        debugPrint('[WAITER WS DEBUG]\nAuthentication/authorization error from STOMP broker. Stopping reconnection.');
+        disconnect();
+        _storageService.clearSession();
+        return;
       }
     } else if (text.startsWith('MESSAGE')) {
       _parseStompMessage(text);

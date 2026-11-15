@@ -43,6 +43,7 @@ public class ReportService {
     private final CustomerRepository customerRepository;
     private final RestaurantSettingsRepository settingsRepository;
     private final SecurityUtils securityUtils;
+    private final com.restaurant.restaurantpos.repository.BillRepository billRepository;
 
     public ReportService(
             OrderRepository orderRepository,
@@ -54,6 +55,22 @@ public class ReportService {
             CustomerRepository customerRepository,
             RestaurantSettingsRepository settingsRepository,
             SecurityUtils securityUtils) {
+        this(orderRepository, orderItemRepository, paymentRepository, inventoryItemRepository,
+             tableRepository, userRepository, customerRepository, settingsRepository, securityUtils, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ReportService(
+            OrderRepository orderRepository,
+            OrderItemRepository orderItemRepository,
+            PaymentRepository paymentRepository,
+            InventoryItemRepository inventoryItemRepository,
+            RestaurantTableRepository tableRepository,
+            UserRepository userRepository,
+            CustomerRepository customerRepository,
+            RestaurantSettingsRepository settingsRepository,
+            SecurityUtils securityUtils,
+            com.restaurant.restaurantpos.repository.BillRepository billRepository) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.paymentRepository = paymentRepository;
@@ -63,6 +80,7 @@ public class ReportService {
         this.customerRepository = customerRepository;
         this.settingsRepository = settingsRepository;
         this.securityUtils = securityUtils;
+        this.billRepository = billRepository;
     }
 
     private ZoneId getRestaurantZoneId(Long restaurantId) {
@@ -104,19 +122,26 @@ public class ReportService {
         BigDecimal cardAmount = calculateSum(todayPaidPayments.stream().filter(p -> "CARD".equalsIgnoreCase(p.getPaymentMethod())).collect(Collectors.toList()), p -> p.getAmount());
 
         List<Order> paidOrders = todayPaidPayments.stream()
-                .filter(p -> p.getBill() != null && p.getBill().getOrder() != null)
+                .filter(p -> p.getBill() != null && p.getBill().getOrder() != null && p.getBill().getOrder().getId() != null)
+                .filter(p -> "COMPLETED".equalsIgnoreCase(p.getBill().getOrder().getStatus()))
                 .map(p -> p.getBill().getOrder())
-                .filter(o -> "COMPLETED".equalsIgnoreCase(o.getStatus()))
-                .distinct()
+                .collect(Collectors.toMap(Order::getId, o -> o, (existing, replacement) -> existing))
+                .values()
+                .stream()
                 .collect(Collectors.toList());
+
+        long ordersSettled = paidOrders.size();
 
         BigDecimal totalTax = calculateSum(paidOrders, o -> o.getTaxAmount());
         BigDecimal totalCgst = calculateSum(paidOrders, o -> o.getCgstAmount());
         BigDecimal totalSgst = calculateSum(paidOrders, o -> o.getSgstAmount());
         BigDecimal totalDiscount = calculateSum(paidOrders, o -> o.getDiscountAmount());
 
-        long paidCount = paidOrders.size();
-        BigDecimal averageOrderValue = paidCount > 0 ? totalRevenue.divide(BigDecimal.valueOf(paidCount), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(2);
+        BigDecimal averageOrderValue = ordersSettled > 0 ? totalRevenue.divide(BigDecimal.valueOf(ordersSettled), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(2);
+
+        long billsGenerated = (billRepository != null)
+                ? billRepository.countByRestaurantIdAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(restaurantId, start, end)
+                : 0L;
 
         Long lowStockCount = inventoryItemRepository.countLowStockItems(restaurantId);
         if (lowStockCount == null) lowStockCount = 0L;
@@ -128,6 +153,8 @@ public class ReportService {
         return DashboardResponse.builder()
                 .date(today)
                 .totalOrders(totalOrders)
+                .ordersSettled(ordersSettled)
+                .billsGenerated(billsGenerated)
                 .completedOrders(completedOrders)
                 .cancelledOrders(cancelledOrders)
                 .pendingOrders(pendingOrders)
@@ -167,24 +194,33 @@ public class ReportService {
         BigDecimal cardAmount = calculateSum(rangePaidPayments.stream().filter(p -> "CARD".equalsIgnoreCase(p.getPaymentMethod())).collect(Collectors.toList()), p -> p.getAmount());
 
         List<Order> paidOrders = rangePaidPayments.stream()
-                .filter(p -> p.getBill() != null && p.getBill().getOrder() != null)
+                .filter(p -> p.getBill() != null && p.getBill().getOrder() != null && p.getBill().getOrder().getId() != null)
+                .filter(p -> "COMPLETED".equalsIgnoreCase(p.getBill().getOrder().getStatus()))
                 .map(p -> p.getBill().getOrder())
-                .filter(o -> "COMPLETED".equalsIgnoreCase(o.getStatus()))
-                .distinct()
+                .collect(Collectors.toMap(Order::getId, o -> o, (existing, replacement) -> existing))
+                .values()
+                .stream()
                 .collect(Collectors.toList());
+
+        long ordersSettled = paidOrders.size();
 
         BigDecimal totalTax = calculateSum(paidOrders, o -> o.getTaxAmount());
         BigDecimal totalCgst = calculateSum(paidOrders, o -> o.getCgstAmount());
         BigDecimal totalSgst = calculateSum(paidOrders, o -> o.getSgstAmount());
         BigDecimal totalDiscount = calculateSum(paidOrders, o -> o.getDiscountAmount());
 
-        long paidCount = paidOrders.size();
-        BigDecimal averageOrderValue = paidCount > 0 ? totalRevenue.divide(BigDecimal.valueOf(paidCount), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(2);
+        BigDecimal averageOrderValue = ordersSettled > 0 ? totalRevenue.divide(BigDecimal.valueOf(ordersSettled), 2, RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(2);
+
+        long billsGenerated = (billRepository != null)
+                ? billRepository.countByRestaurantIdAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(restaurantId, start, end)
+                : 0L;
 
         return SalesReportResponse.builder()
                 .from(from)
                 .to(to)
                 .totalOrders(totalOrders)
+                .ordersSettled(ordersSettled)
+                .billsGenerated(billsGenerated)
                 .completedOrders(completedOrders)
                 .cancelledOrders(cancelledOrders)
                 .totalRevenue(totalRevenue)
@@ -218,10 +254,17 @@ public class ReportService {
 
             List<Payment> dayPayments = paymentRepository.findByBillRestaurantIdAndPaymentStatusAndPaidAtGreaterThanEqualAndPaidAtLessThan(restaurantId, "PAID", start, end);
             BigDecimal revenue = calculateSum(dayPayments, p -> p.getAmount());
+            long dayOrdersSettled = dayPayments.stream()
+                    .filter(p -> p.getBill() != null && p.getBill().getOrder() != null && p.getBill().getOrder().getId() != null)
+                    .filter(p -> "COMPLETED".equalsIgnoreCase(p.getBill().getOrder().getStatus()))
+                    .map(p -> p.getBill().getOrder().getId())
+                    .distinct()
+                    .count();
 
             list.add(DailySalesResponse.builder()
                     .date(d)
                     .orders(ordersCount)
+                    .ordersSettled(dayOrdersSettled)
                     .completedOrders(completedCount)
                     .cancelledOrders(cancelledCount)
                     .revenue(revenue)
@@ -505,6 +548,13 @@ public class ReportService {
         List<OrderItem> orderItems = orderItemRepository.findByOrderId(order.getId());
         List<ReportBillItemResponse> itemResponses = orderItems.stream().map(item -> {
             String menuItemName = item.getMenuItem() != null ? item.getMenuItem().getName() : null;
+            String variationName = item.getVariationName() != null ? item.getVariationName() :
+                    (item.getVariation() != null ? item.getVariation().getName() : null);
+            Long variationId = item.getVariation() != null ? item.getVariation().getId() : null;
+            String displayName = (menuItemName != null && variationName != null && !variationName.isBlank())
+                    ? menuItemName + " (" + variationName + ")"
+                    : menuItemName;
+
             BigDecimal itemSubtotal = item.getSubtotal() != null ? item.getSubtotal() :
                     (item.getUnitPrice() != null && item.getQuantity() != null ?
                             item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity())) : BigDecimal.ZERO);
@@ -512,7 +562,9 @@ public class ReportService {
                     .id(item.getId())
                     .menuItemId(item.getMenuItem() != null ? item.getMenuItem().getId() : null)
                     .menuItemName(menuItemName)
-                    .name(menuItemName)
+                    .name(displayName)
+                    .variationId(variationId)
+                    .variationName(variationName)
                     .quantity(item.getQuantity())
                     .unitPrice(item.getUnitPrice())
                     .notes(item.getNotes())

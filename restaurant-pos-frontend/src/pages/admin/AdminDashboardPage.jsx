@@ -41,6 +41,7 @@ const SalesOverviewChart = ({ data }) => {
       rev,
       date: item.date,
       orders: item.orders || 0,
+      ordersSettled: item.ordersSettled != null ? Number(item.ordersSettled) : null,
       index,
     };
   });
@@ -114,7 +115,14 @@ const SalesOverviewChart = ({ data }) => {
               {hoveredPoint.rev.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
             <div className="chart-tooltip-orders">
-              {hoveredPoint.orders} paid order{hoveredPoint.orders === 1 ? '' : 's'}
+              {hoveredPoint.ordersSettled !== null ? (
+                <>
+                  <div>{hoveredPoint.ordersSettled} settled order{hoveredPoint.ordersSettled === 1 ? '' : 's'}</div>
+                  <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>({hoveredPoint.orders} created)</div>
+                </>
+              ) : (
+                <div>{hoveredPoint.orders} created order{hoveredPoint.orders === 1 ? '' : 's'}</div>
+              )}
             </div>
           </div>
         )}
@@ -199,6 +207,7 @@ export const AdminDashboardPage = () => {
 
   const [todaySales, setTodaySales] = useState(null);
   const [todayOrders, setTodayOrders] = useState(null);
+  const [todayOrdersSettled, setTodayOrdersSettled] = useState(null);
   const [activeTables, setActiveTables] = useState(null);
   const [pendingKitchenOrders, setPendingKitchenOrders] = useState(null);
   const [dashboardLoading, setDashboardLoading] = useState(true);
@@ -241,10 +250,12 @@ export const AdminDashboardPage = () => {
         if (isMounted) {
           const revenue = data?.totalRevenue != null ? Number(data.totalRevenue) : 0;
           const orders = data?.totalOrders != null ? Number(data.totalOrders) : 0;
+          const settled = data?.ordersSettled != null ? Number(data.ordersSettled) : null;
           const tables = data?.activeTableCount != null ? Number(data.activeTableCount) : 0;
           const pending = data?.pendingOrders != null ? Number(data.pendingOrders) : 0;
           setTodaySales(revenue);
           setTodayOrders(orders);
+          setTodayOrdersSettled(settled);
           setActiveTables(tables);
           setPendingKitchenOrders(pending);
           setDashboardLoading(false);
@@ -392,11 +403,13 @@ export const AdminDashboardPage = () => {
     {
       title: "Today's Sales",
       value: formatSalesValue(),
+      subtitle: todayOrdersSettled !== null ? `From ${todayOrdersSettled} settled order${todayOrdersSettled === 1 ? '' : 's'}` : null,
       isPlaceholder: false,
     },
     {
-      title: "Today's Orders",
+      title: "Today's Orders (Created)",
       value: formatOrdersValue(),
+      subtitle: todayOrdersSettled !== null ? `${todayOrdersSettled} settled today` : null,
       isPlaceholder: false,
     },
     {
@@ -443,6 +456,7 @@ export const AdminDashboardPage = () => {
               key={idx}
               title={card.title}
               value={card.value}
+              subtitle={card.subtitle}
               isPlaceholder={card.isPlaceholder}
             />
           ))}

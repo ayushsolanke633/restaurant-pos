@@ -85,10 +85,11 @@ void main() {
       expect(find.text('COMPLETE ORDER'), findsNothing);
       expect(find.text('Mark Paid'), findsNothing);
 
-      // Verify legitimate waiter actions ARE available
+      // Verify legitimate waiter actions ARE available, and CANCEL ORDER is NOT available (Admin-only cancellation)
       expect(find.text('ADD ITEMS'), findsOneWidget);
-      expect(find.text('CANCEL ORDER'), findsOneWidget);
       expect(find.text('MODIFY ORDER'), findsOneWidget);
+      expect(find.text('BACK TO TABLES'), findsOneWidget);
+      expect(find.text('CANCEL ORDER'), findsNothing);
     });
 
     testWidgets('2. In READY status, Waiter still sees Admin billing notice and no bill controls', (tester) async {

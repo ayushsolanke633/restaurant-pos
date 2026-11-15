@@ -6,6 +6,7 @@ import '../constants/api_constants.dart';
 import '../errors/app_exception.dart';
 import '../storage/secure_storage_service.dart';
 import 'backend_url_resolver.dart';
+import 'websocket_service.dart';
 
 class ApiClient {
   final http.Client _client;
@@ -218,7 +219,13 @@ class ApiClient {
         throw AppException(msg.toString(), code: '400', details: (body is Map) ? body : null);
       case 401:
         _storageService.clearSession();
-        throw const AppException('Your session has expired. Please login again.', code: '401');
+        try {
+          WebSocketService.instance().disconnect();
+        } catch (_) {}
+        final msg = (body is Map && body['message'] != null && body['message'].toString().trim().isNotEmpty)
+            ? body['message'].toString()
+            : 'Your session has expired. Please login again.';
+        throw AppException(msg, code: '401', details: (body is Map) ? body : null);
       case 403:
         final msg = (body is Map)
             ? (body['message'] ?? body['error'] ?? 'You do not have permission to perform this action.')

@@ -18,6 +18,8 @@ public class OrderItemResponse {
     private Long id;
     private Long menuItemId;
     private String menuItemName;
+    private Long variationId;
+    private String variationName;
     private Integer quantity;
     private BigDecimal unitPrice;
     private String notes;

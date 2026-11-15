@@ -18,8 +18,31 @@ public class SalesReportResponse {
 
     private LocalDate from;
     private LocalDate to;
+
+    /**
+     * Total distinct orders created within the date range (based on order.createdAt).
+     */
     private Long totalOrders;
+
+    /**
+     * Total distinct orders whose payment was successfully settled (PAID) within the date range (based on payment.paidAt).
+     */
+    private Long ordersSettled;
+
+    /**
+     * Total bills generated within the date range (based on bill.createdAt).
+     */
+    private Long billsGenerated;
+
+    /**
+     * Legacy metric: count of orders created within the date range that currently have status COMPLETED.
+     * Note: Avoid using as a substitute for settled orders; does not reflect older orders settled in this period.
+     */
     private Long completedOrders;
+
+    /**
+     * Count of orders created within the date range that currently have status CANCELLED.
+     */
     private Long cancelledOrders;
     private BigDecimal totalRevenue;
     private BigDecimal totalTax;

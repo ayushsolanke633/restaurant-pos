@@ -60,6 +60,9 @@ public class Step22ReportsTest {
     private RestaurantSettingsRepository settingsRepository;
 
     @Mock
+    private BillRepository billRepository;
+
+    @Mock
     private SecurityUtils securityUtils;
 
     @InjectMocks

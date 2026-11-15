@@ -4,6 +4,7 @@ import com.restaurant.restaurantpos.entity.Bill;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -18,4 +19,5 @@ public interface BillRepository extends JpaRepository<Bill, Long> {
     List<Bill> findByRestaurantIdOrderByCreatedAtDesc(Long restaurantId);
     Optional<Bill> findTopByRestaurantIdOrderByIdDesc(Long restaurantId);
     long countByRestaurantId(Long restaurantId);
+    long countByRestaurantIdAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(Long restaurantId, LocalDateTime start, LocalDateTime end);
 }

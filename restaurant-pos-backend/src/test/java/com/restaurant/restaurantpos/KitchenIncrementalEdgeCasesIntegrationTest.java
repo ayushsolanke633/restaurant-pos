@@ -567,13 +567,21 @@ public class KitchenIncrementalEdgeCasesIntegrationTest {
         );
         assertTrue(billEx.getMessage().contains("Order is not in READY status"));
 
-        // 6. Cancellation attempt while kitchen is preparing must be REJECTED
+        // 6. Cancellation attempt: Waiter is blocked from cancelling (ADMIN-only cancellation)
         when(securityUtils.getCurrentUserRole()).thenReturn("WAITER");
         when(securityUtils.getCurrentUserId()).thenReturn(100L);
-        OrderWorkflowConflictException cancelEx = assertThrows(OrderWorkflowConflictException.class, () ->
+        AccessDeniedException cancelEx = assertThrows(AccessDeniedException.class, () ->
                 orderService.cancelOrder(207L)
         );
-        assertTrue(cancelEx.getMessage().contains("Order cannot be cancelled after kitchen acceptance"));
+        assertTrue(cancelEx.getMessage().contains("Only ADMIN can cancel orders"));
+
+        // Admin cannot cancel order while preparing
+        when(securityUtils.getCurrentUserRole()).thenReturn("ADMIN");
+        when(securityUtils.getCurrentUserId()).thenReturn(300L);
+        OrderWorkflowConflictException adminCancelEx = assertThrows(OrderWorkflowConflictException.class, () ->
+                orderService.cancelOrder(207L)
+        );
+        assertTrue(adminCancelEx.getMessage().contains("Invalid cancellation status"));
 
         // 7. Advance all items to READY -> Billing SUCCEEDS
         initialItem.setStatus("READY");
